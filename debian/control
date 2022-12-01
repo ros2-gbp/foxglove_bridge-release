@@ -1,0 +1,12 @@
+Source: ros-rolling-foxglove-bridge
+Section: misc
+Priority: optional
+Maintainer: John Hurliman <john@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), libasio-dev, libssl-dev, libwebsocketpp-dev, nlohmann-json3-dev, ros-rolling-ament-cmake, ros-rolling-ament-cmake-gtest, ros-rolling-ament-index-cpp, ros-rolling-ament-lint-auto, ros-rolling-rclcpp, ros-rolling-rclcpp-components, ros-rolling-ros-environment, ros-rolling-rosgraph-msgs, ros-rolling-std-msgs, ros-rolling-ros-workspace
+Homepage: https://github.com/foxglove/ros-foxglove-bridge
+Standards-Version: 3.9.2
+
+Package: ros-rolling-foxglove-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, ros-rolling-ament-index-cpp, ros-rolling-rclcpp, ros-rolling-rclcpp-components, ros-rolling-rosgraph-msgs, ros-rolling-ros-workspace
+Description: ROS Foxglove Bridge
