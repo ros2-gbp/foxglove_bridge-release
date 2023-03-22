@@ -76,4 +76,5 @@ tracks:
     ros_distro: rolling
     vcs_type: git
     vcs_uri: https://github.com/foxglove/ros-foxglove-bridge.git
-    version: :{auto}
+    version: 0.5.1
+    version_saved: :{auto}
