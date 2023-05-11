@@ -1,0 +1,12 @@
+Source: ros-humble-foxglove-bridge
+Section: misc
+Priority: optional
+Maintainer: John Hurliman <john@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), libasio-dev, libssl-dev, libwebsocketpp-dev, nlohmann-json3-dev, ros-humble-ament-cmake, ros-humble-ament-cmake-gtest <!nocheck>, ros-humble-ament-index-cpp, ros-humble-ament-lint-auto <!nocheck>, ros-humble-rclcpp, ros-humble-rclcpp-components, ros-humble-ros-environment, ros-humble-rosgraph-msgs, ros-humble-std-msgs <!nocheck>, ros-humble-std-srvs <!nocheck>, zlib1g-dev, ros-humble-ros-workspace
+Homepage: https://github.com/foxglove/ros-foxglove-bridge
+Standards-Version: 3.9.2
+
+Package: ros-humble-foxglove-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, ros-humble-ament-index-cpp, ros-humble-rclcpp, ros-humble-rclcpp-components, ros-humble-rosgraph-msgs, zlib1g-dev, ros-humble-ros-workspace
+Description: ROS Foxglove Bridge
