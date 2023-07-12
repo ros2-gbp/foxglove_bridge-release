@@ -1,6 +1,5 @@
-#define ASIO_STANDALONE
-
 #include <chrono>
+#include <filesystem>
 #include <future>
 #include <thread>
 
@@ -543,6 +542,52 @@ TEST(SmokeTest, receiveMessagesOfMultipleTransientLocalPublishers) {
   spinnerThread.join();
 }
 
+TEST(FetchAssetTest, fetchExistingAsset) {
+  auto wsClient = std::make_shared<foxglove::Client<websocketpp::config::asio_client>>();
+  EXPECT_EQ(std::future_status::ready, wsClient->connect(URI).wait_for(DEFAULT_TIMEOUT));
+
+  const auto millisSinceEpoch = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch());
+  const auto tmpFilePath =
+    std::filesystem::temp_directory_path() / std::to_string(millisSinceEpoch.count());
+  constexpr char content[] = "Hello, world";
+  FILE* tmpAssetFile = std::fopen(tmpFilePath.c_str(), "w");
+  std::fputs(content, tmpAssetFile);
+  std::fclose(tmpAssetFile);
+
+  const std::string uri = std::string("file://") + tmpFilePath.string();
+  const uint32_t requestId = 123;
+
+  auto future = foxglove::waitForFetchAssetResponse(wsClient);
+  wsClient->fetchAsset(uri, requestId);
+  ASSERT_EQ(std::future_status::ready, future.wait_for(DEFAULT_TIMEOUT));
+  const foxglove::FetchAssetResponse response = future.get();
+
+  EXPECT_EQ(response.requestId, requestId);
+  EXPECT_EQ(response.status, foxglove::FetchAssetStatus::Success);
+  // +1 since NULL terminator is not written to file.
+  ASSERT_EQ(response.data.size() + 1ul, sizeof(content));
+  EXPECT_EQ(0, std::memcmp(content, response.data.data(), response.data.size()));
+  std::remove(tmpFilePath.c_str());
+}
+
+TEST(FetchAssetTest, fetchNonExistingAsset) {
+  auto wsClient = std::make_shared<foxglove::Client<websocketpp::config::asio_client>>();
+  EXPECT_EQ(std::future_status::ready, wsClient->connect(URI).wait_for(DEFAULT_TIMEOUT));
+
+  const std::string assetId = "file:///foo/bar";
+  const uint32_t requestId = 456;
+
+  auto future = foxglove::waitForFetchAssetResponse(wsClient);
+  wsClient->fetchAsset(assetId, requestId);
+  ASSERT_EQ(std::future_status::ready, future.wait_for(DEFAULT_TIMEOUT));
+  const foxglove::FetchAssetResponse response = future.get();
+
+  EXPECT_EQ(response.requestId, requestId);
+  EXPECT_EQ(response.status, foxglove::FetchAssetStatus::Error);
+  EXPECT_FALSE(response.errorMessage.empty());
+}
+
 // Run all the tests that were declared with TEST()
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
@@ -561,7 +606,11 @@ int main(int argc, char** argv) {
   }
 
   auto componentFactory = componentManager.create_component_factory(componentResources.front());
-  auto node = componentFactory->create_node_instance(rclcpp::NodeOptions());
+  rclcpp::NodeOptions nodeOptions;
+  // Explicitly allow file:// asset URIs for testing purposes.
+  nodeOptions.append_parameter_override("asset_uri_allowlist",
+                                        std::vector<std::string>({"file://.*"}));
+  auto node = componentFactory->create_node_instance(nodeOptions);
   executor->add_node(node.get_node_base_interface());
 
   std::thread spinnerThread([&executor]() {
