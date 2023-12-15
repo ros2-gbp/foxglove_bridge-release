@@ -1,3 +1,26 @@
+## foxglove_bridge (iron) - 0.7.4-1
+
+The packages in the `foxglove_bridge` repository were released into the `iron` distro by running `/home/vscode/.local/bin/bloom-release foxglove_bridge --ros-distro iron` on `Fri, 15 Dec 2023 14:51:02 -0000`
+
+The `foxglove_bridge` package was released.
+
+Version of package(s) in repository `foxglove_bridge`:
+
+- upstream repository: https://github.com/foxglove/ros-foxglove-bridge.git
+- release repository: https://github.com/ros2-gbp/foxglove_bridge-release.git
+- rosdistro version: `0.7.3-1`
+- old version: `0.7.3-1`
+- new version: `0.7.4-1`
+
+Versions of tools used:
+
+- bloom version: `0.11.2`
+- catkin_pkg version: `0.5.2`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## foxglove_bridge (humble) - 0.7.4-1
 
 The packages in the `foxglove_bridge` repository were released into the `humble` distro by running `/home/vscode/.local/bin/bloom-release foxglove_bridge --ros-distro humble` on `Fri, 15 Dec 2023 14:47:02 -0000`
