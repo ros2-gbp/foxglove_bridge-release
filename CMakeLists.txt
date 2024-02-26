@@ -9,7 +9,7 @@ if(POLICY CMP0024)
   set(CMAKE_POLICY_DEFAULT_CMP0024 NEW)
 endif()
 
-project(foxglove_bridge LANGUAGES CXX VERSION 0.7.5)
+project(foxglove_bridge LANGUAGES CXX VERSION 0.7.6)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -154,6 +154,14 @@ elseif("$ENV{ROS_VERSION}" STREQUAL "2")
       ros2_foxglove_bridge/src/parameter_interface.cpp
       ros2_foxglove_bridge/src/generic_client.cpp
     )
+
+    target_compile_definitions(foxglove_bridge_component
+      PRIVATE
+        RCLCPP_VERSION_MAJOR=${rclcpp_VERSION_MAJOR}
+        RCLCPP_VERSION_MINOR=${rclcpp_VERSION_MINOR}
+        RCLCPP_VERSION_PATCH=${rclcpp_VERSION_PATCH}
+    )
+
     target_include_directories(foxglove_bridge_component
       PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/foxglove_bridge_base/include>
