@@ -1,3 +1,26 @@
+## foxglove_bridge (rolling) - 0.7.6-2
+
+The packages in the `foxglove_bridge` repository were released into the `rolling` distro by running `/usr/bin/bloom-release --track rolling --rosdistro rolling foxglove_bridge` on `Thu, 07 Mar 2024 15:54:57 -0000`
+
+The `foxglove_bridge` package was released.
+
+Version of package(s) in repository `foxglove_bridge`:
+
+- upstream repository: https://github.com/foxglove/ros-foxglove-bridge.git
+- release repository: https://github.com/ros2-gbp/foxglove_bridge-release.git
+- rosdistro version: `null`
+- old version: `0.7.6-1`
+- new version: `0.7.6-2`
+
+Versions of tools used:
+
+- bloom version: `0.11.2`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.22.2`
+- rosdistro version: `0.9.0`
+- vcstools version: `0.1.42`
+
+
 ## foxglove_bridge (rolling) - 0.7.6-1
 
 The packages in the `foxglove_bridge` repository were released into the `rolling` distro by running `/home/vscode/.local/bin/bloom-release foxglove_bridge --ros-distro rolling` on `Mon, 26 Feb 2024 14:23:09 -0000`
