@@ -1,1 +1,1 @@
-{"base": "ab27366", "parent": "debian/rolling/foxglove_bridge", "previous": "4ce01e1", "trim": "", "trimbase": ""}
+{"base": "c95476c", "parent": "debian/jazzy/foxglove_bridge", "previous": "2dab4af", "trim": "", "trimbase": ""}
