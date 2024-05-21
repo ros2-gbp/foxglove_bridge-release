@@ -22,7 +22,7 @@ The `foxglove_bridge` uses the [Foxglove WebSocket protocol](https://github.com/
 The `foxglove_bridge` package is available for ROS 1 Melodic and Noetic, and ROS 2 Humble and Rolling. Earlier releases of ROS will not be supported due to API design and/or performance limitations. The package can be installed with the following command:
 
 ```bash
-$ sudo apt install ros-$ROS_DISTRO-foxglove-bridge
+sudo apt install ros-$ROS_DISTRO-foxglove-bridge
 ```
 
 ## Running the bridge
@@ -32,7 +32,7 @@ To run the bridge node, it is recommended to use the provided launch file:
 **ROS 1**
 
 ```bash
-$ roslaunch --screen foxglove_bridge foxglove_bridge.launch port:=8765
+roslaunch --screen foxglove_bridge foxglove_bridge.launch port:=8765
 ```
 
 ```xml
@@ -48,13 +48,13 @@ $ roslaunch --screen foxglove_bridge foxglove_bridge.launch port:=8765
 **ROS 2**
 
 ```bash
-$ ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765
+ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765
 ```
 
 ```xml
 <launch>
   <!-- Including in another launch file -->
-  <include file="$(find-pkg-share foxglove_bridge)/launch/foxglove_bridge_launch.xml"/>
+  <include file="$(find-pkg-share foxglove_bridge)/launch/foxglove_bridge_launch.xml">
     <arg name="port" value="8765"/>
     <!-- ... other arguments ... -->
   </include>
@@ -75,7 +75,7 @@ Parameters are provided to configure the behavior of the bridge. These parameter
  * __param_whitelist__: List of regular expressions ([ECMAScript grammar](https://en.cppreference.com/w/cpp/regex/ecmascript)) of whitelisted parameter names. Defaults to `[".*"]`.
   * __client_topic_whitelist__: List of regular expressions ([ECMAScript grammar](https://en.cppreference.com/w/cpp/regex/ecmascript)) of whitelisted client-published topic names. Defaults to `[".*"]`.
  * __send_buffer_limit__: Connection send buffer limit in bytes. Messages will be dropped when a connection's send buffer reaches this limit to avoid a queue of outdated messages building up. Defaults to `10000000` (10 MB).
- * __use_compression__: Use websocket compression (permessage-deflate). Suited for connections with smaller bandwith, at the cost of additional CPU load.
+ * __use_compression__: Use websocket compression (permessage-deflate). It is recommended to leave this turned off as it increases CPU usage and per-message compression often yields low compression ratios for robotics data. Defaults to `false`.
  * __capabilities__: List of supported [server capabilities](https://github.com/foxglove/ws-protocol/blob/main/docs/spec.md). Defaults to `[clientPublish,parameters,parametersSubscribe,services,connectionGraph,assets]`.
  * __asset_uri_allowlist__: List of regular expressions ([ECMAScript grammar](https://en.cppreference.com/w/cpp/regex/ecmascript)) of allowed asset URIs. Uses the [resource_retriever](https://index.ros.org/p/resource_retriever/github-ros-resource_retriever) to resolve `package://`, `file://` or `http(s)://` URIs. Note that this list should be carefully configured such that no confidential files are accidentally exposed over the websocket connection. As an extra security measure, URIs containing two consecutive dots (`..`) are disallowed as they could be used to construct URIs that would allow retrieval of confidential files if the allowlist is not configured strict enough (e.g. `package://<pkg_name>/../../../secret.txt`). Defaults to `["^package://(?:\w+/)*\w+\.(?:dae|fbx|glb|gltf|jpeg|jpg|mtl|obj|png|stl|tif|tiff|urdf|webp|xacro)$"]`.
  * (ROS 1) __max_update_ms__: The maximum number of milliseconds to wait in between polling `roscore` for new topics, services, or parameters. Defaults to `5000`.
@@ -112,7 +112,7 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 
 ## Clients
 
-[Foxglove Studio](https://foxglove.dev/studio) connects to foxglove_bridge for live robotics visualization.
+[Foxglove](https://foxglove.dev/) connects to foxglove_bridge for live robotics visualization.
 
 ## Development
 
