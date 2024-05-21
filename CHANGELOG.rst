@@ -2,6 +2,26 @@
 Changelog for package foxglove_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.7.7 (2024-05-21)
+------------------
+* send service call failure operation (`#298 <https://github.com/foxglove/ros-foxglove-bridge/issues/298>`_)
+* Fix service definition parsing on ROS rolling (`#293 <https://github.com/foxglove/ros-foxglove-bridge/issues/293>`_)
+* Update docs to discourage users from using websocket compression (`#297 <https://github.com/foxglove/ros-foxglove-bridge/issues/297>`_)
+* Update README.md to remove '$ ' so that you can copy and run command (`#294 <https://github.com/foxglove/ros-foxglove-bridge/issues/294>`_)
+* Fix typo in ROS2 launch file example (`#296 <https://github.com/foxglove/ros-foxglove-bridge/issues/296>`_)
+* Contributors: Felipe Galindo, Hans-Joachim Krauch, Jacob Bandes-Storch, Roman Shtylman
+
+0.7.6 (2024-02-26)
+------------------
+* Fix rolling builds (`#289 <https://github.com/foxglove/ros-foxglove-bridge/issues/289>`_)
+* Remove dual ROS 1+2 devcontainer, remove ROS Galactic from the support matrix (`#285 <https://github.com/foxglove/ros-foxglove-bridge/issues/285>`_)
+* Contributors: Hans-Joachim Krauch, John Hurliman
+
+0.7.5 (2023-12-29)
+------------------
+* Add ROS 2 dependency for ament_index_cpp (`#281 <https://github.com/foxglove/ros-foxglove-bridge/issues/281>`_)
+* Contributors: Chris Lalancette
+
 0.7.4 (2023-12-14)
 ------------------
 * Solved bug with incompatible QoS policies
