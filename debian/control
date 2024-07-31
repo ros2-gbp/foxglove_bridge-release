@@ -1,0 +1,12 @@
+Source: ros-jazzy-foxglove-bridge
+Section: misc
+Priority: optional
+Maintainer: John Hurliman <john@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), libasio-dev, libssl-dev, libwebsocketpp-dev, nlohmann-json3-dev, ros-jazzy-ament-cmake, ros-jazzy-ament-cmake-gtest <!nocheck>, ros-jazzy-ament-index-cpp, ros-jazzy-ament-lint-auto <!nocheck>, ros-jazzy-rclcpp, ros-jazzy-rclcpp-components, ros-jazzy-resource-retriever, ros-jazzy-ros-environment, ros-jazzy-rosgraph-msgs, ros-jazzy-rosx-introspection, ros-jazzy-std-msgs <!nocheck>, ros-jazzy-std-srvs <!nocheck>, zlib1g-dev, ros-jazzy-ros-workspace
+Homepage: https://github.com/foxglove/ros-foxglove-bridge
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-foxglove-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, ros-jazzy-ament-index-cpp, ros-jazzy-rclcpp, ros-jazzy-rclcpp-components, ros-jazzy-resource-retriever, ros-jazzy-rosgraph-msgs, ros-jazzy-rosx-introspection, zlib1g-dev, ros-jazzy-ros-workspace
+Description: ROS Foxglove Bridge
