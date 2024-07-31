@@ -1,0 +1,12 @@
+Source: ros-iron-foxglove-bridge
+Section: misc
+Priority: optional
+Maintainer: John Hurliman <john@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), libasio-dev, libssl-dev, libwebsocketpp-dev, nlohmann-json3-dev, ros-iron-ament-cmake, ros-iron-ament-cmake-gtest <!nocheck>, ros-iron-ament-index-cpp, ros-iron-ament-lint-auto <!nocheck>, ros-iron-rclcpp, ros-iron-rclcpp-components, ros-iron-resource-retriever, ros-iron-ros-environment, ros-iron-rosgraph-msgs, ros-iron-rosx-introspection, ros-iron-std-msgs <!nocheck>, ros-iron-std-srvs <!nocheck>, zlib1g-dev, ros-iron-ros-workspace
+Homepage: https://github.com/foxglove/ros-foxglove-bridge
+Standards-Version: 3.9.2
+
+Package: ros-iron-foxglove-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, ros-iron-ament-index-cpp, ros-iron-rclcpp, ros-iron-rclcpp-components, ros-iron-resource-retriever, ros-iron-rosgraph-msgs, ros-iron-rosx-introspection, zlib1g-dev, ros-iron-ros-workspace
+Description: ROS Foxglove Bridge
