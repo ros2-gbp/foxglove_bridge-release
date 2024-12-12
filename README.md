@@ -1,3 +1,26 @@
+## foxglove_bridge (humble) - 0.8.2-1
+
+The packages in the `foxglove_bridge` repository were released into the `humble` distro by running `/usr/bin/bloom-release foxglove_bridge --rosdistro humble -y` on `Thu, 12 Dec 2024 01:56:33 -0000`
+
+The `foxglove_bridge` package was released.
+
+Version of package(s) in repository `foxglove_bridge`:
+
+- upstream repository: https://github.com/foxglove/ros-foxglove-bridge.git
+- release repository: https://github.com/ros2-gbp/foxglove_bridge-release.git
+- rosdistro version: `0.8.1-1`
+- old version: `0.8.1-1`
+- new version: `0.8.2-1`
+
+Versions of tools used:
+
+- bloom version: `0.12.0`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.25.1`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## foxglove_bridge (humble) - 0.8.1-1
 
 The packages in the `foxglove_bridge` repository were released into the `humble` distro by running `/usr/bin/bloom-release foxglove_bridge --rosdistro humble -y` on `Tue, 26 Nov 2024 22:55:28 -0000`
