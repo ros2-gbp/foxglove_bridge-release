@@ -1,0 +1,12 @@
+Source: ros-kilted-foxglove-bridge
+Section: misc
+Priority: optional
+Maintainer: Hans-Joachim Krauch <achim@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), libasio-dev, libssl-dev, libwebsocketpp-dev, nlohmann-json3-dev, ros-kilted-ament-cmake, ros-kilted-ament-cmake-gtest <!nocheck>, ros-kilted-ament-index-cpp, ros-kilted-ament-lint-auto <!nocheck>, ros-kilted-rclcpp, ros-kilted-rclcpp-components, ros-kilted-resource-retriever, ros-kilted-ros-environment, ros-kilted-rosgraph-msgs, ros-kilted-rosx-introspection, ros-kilted-std-msgs <!nocheck>, ros-kilted-std-srvs <!nocheck>, zlib1g-dev, ros-kilted-ros-workspace
+Homepage: https://github.com/foxglove/ros-foxglove-bridge
+Standards-Version: 3.9.2
+
+Package: ros-kilted-foxglove-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssl, ros-kilted-ament-index-cpp, ros-kilted-rclcpp, ros-kilted-rclcpp-components, ros-kilted-resource-retriever, ros-kilted-rosgraph-msgs, ros-kilted-rosx-introspection, zlib1g-dev, ros-kilted-ros-workspace
+Description: ROS Foxglove Bridge
