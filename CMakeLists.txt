@@ -9,7 +9,7 @@ if(POLICY CMP0024)
   set(CMAKE_POLICY_DEFAULT_CMP0024 NEW)
 endif()
 
-project(foxglove_bridge LANGUAGES CXX VERSION 0.8.3)
+project(foxglove_bridge LANGUAGES CXX VERSION 0.8.5)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -158,9 +158,9 @@ elseif("$ENV{ROS_VERSION}" STREQUAL "2")
 
     target_compile_definitions(foxglove_bridge_component
       PRIVATE
-        RCLCPP_VERSION_MAJOR=${rclcpp_VERSION_MAJOR}
-        RCLCPP_VERSION_MINOR=${rclcpp_VERSION_MINOR}
-        RCLCPP_VERSION_PATCH=${rclcpp_VERSION_PATCH}
+        RESOURCE_RETRIEVER_VERSION_MAJOR=${resource_retriever_VERSION_MAJOR}
+        RESOURCE_RETRIEVER_VERSION_MINOR=${resource_retriever_VERSION_MINOR}
+        RESOURCE_RETRIEVER_VERSION_PATCH=${resource_retriever_VERSION_PATCH}
     )
 
     target_include_directories(foxglove_bridge_component

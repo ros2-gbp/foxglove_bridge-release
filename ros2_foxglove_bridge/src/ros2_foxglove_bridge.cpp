@@ -55,6 +55,8 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
   const auto assetUriAllowlist = this->get_parameter(PARAM_ASSET_URI_ALLOWLIST).as_string_array();
   _assetUriAllowlistPatterns = parseRegexStrings(this, assetUriAllowlist);
   _disableLoanMessage = this->get_parameter(PARAM_DISABLE_LOAN_MESSAGE).as_bool();
+  const auto ignoreUnresponsiveParamNodes =
+    this->get_parameter(PARAM_IGN_UNRESPONSIVE_PARAM_NODES).as_bool();
 
   const auto logHandler = std::bind(&FoxgloveBridge::logHandler, this, _1, _2);
   // Fetching of assets may be blocking, hence we fetch them in a separate thread.
@@ -95,7 +97,10 @@ FoxgloveBridge::FoxgloveBridge(const rclcpp::NodeOptions& options)
     hdlrs.parameterSubscriptionHandler =
       std::bind(&FoxgloveBridge::subscribeParameters, this, _1, _2, _3);
 
-    _paramInterface = std::make_shared<ParameterInterface>(this, paramWhitelistPatterns);
+    _paramInterface = std::make_shared<ParameterInterface>(this, paramWhitelistPatterns,
+                                                           ignoreUnresponsiveParamNodes
+                                                             ? UnresponsiveNodePolicy::Ignore
+                                                             : UnresponsiveNodePolicy::Retry);
     _paramInterface->setParamUpdateCallback(std::bind(&FoxgloveBridge::parameterUpdates, this, _1));
   }
 
@@ -937,11 +942,22 @@ void FoxgloveBridge::fetchAsset(const std::string& uri, uint32_t requestId,
     }
 
     resource_retriever::Retriever resource_retriever;
+
+    // The resource_retriever API has changed from 3.7 onwards.
+#if RESOURCE_RETRIEVER_VERSION_MAJOR > 3 || \
+  (RESOURCE_RETRIEVER_VERSION_MAJOR == 3 && RESOURCE_RETRIEVER_VERSION_MINOR > 6)
+    const auto memoryResource = resource_retriever.get_shared(uri);
+    response.status = foxglove::FetchAssetStatus::Success;
+    response.errorMessage = "";
+    response.data.resize(memoryResource->data.size());
+    std::memcpy(response.data.data(), memoryResource->data.data(), memoryResource->data.size());
+#else
     const resource_retriever::MemoryResource memoryResource = resource_retriever.get(uri);
     response.status = foxglove::FetchAssetStatus::Success;
     response.errorMessage = "";
     response.data.resize(memoryResource.size);
     std::memcpy(response.data.data(), memoryResource.data.get(), memoryResource.size);
+#endif
   } catch (const std::exception& ex) {
     RCLCPP_WARN(this->get_logger(), "Failed to retrieve asset '%s': %s", uri.c_str(), ex.what());
     response.status = foxglove::FetchAssetStatus::Error;
