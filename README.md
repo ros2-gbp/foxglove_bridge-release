@@ -1,3 +1,28 @@
+## foxglove_bridge (kilted) - 3.2.1-1
+
+The packages in the `foxglove_bridge` repository were released into the `kilted` distro by running `/usr/bin/bloom-release --ros-distro kilted -e foxglove_bridge` on `Fri, 26 Sep 2025 19:27:15 -0000`
+
+These packages were released:
+- `foxglove_bridge`
+- `foxglove_msgs`
+
+Version of package(s) in repository `foxglove_bridge`:
+
+- upstream repository: https://github.com/foxglove/foxglove-sdk.git
+- release repository: https://github.com/ros2-gbp/foxglove_bridge-release.git
+- rosdistro version: `0.8.5-1`
+- old version: `0.8.5-1`
+- new version: `3.2.1-1`
+
+Versions of tools used:
+
+- bloom version: `0.13.0`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.26.0`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## foxglove-sdk (rolling) - 3.2.1-1
 
 The packages in the `foxglove-sdk` repository were released into the `rolling` distro by running `/usr/bin/bloom-release --ros-distro rolling foxglove-sdk` on `Fri, 26 Sep 2025 19:10:02 -0000`
