@@ -42,14 +42,14 @@ tracks:
       :{release_inc} --os-name rhel
     devel_branch: main
     last_version: 0.8.5
-    name: foxglove_bridge
+    name: foxglove-sdk
     patches: null
     release_inc: '1'
     release_repo_url: null
-    release_tag: :{version}
+    release_tag: ros-v:{version}
     ros_distro: humble
     vcs_type: git
-    vcs_uri: https://github.com/foxglove/ros-foxglove-bridge.git
+    vcs_uri: https://github.com/foxglove/foxglove-sdk.git
     version: :{auto}
   iron:
     actions:
