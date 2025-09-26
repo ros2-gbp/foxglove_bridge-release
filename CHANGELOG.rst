@@ -2,6 +2,17 @@
 Changelog for package foxglove_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.1 (2025-09-26)
+------------------
+* Fix memory leak in generic_client allocate_message (`#667 <https://github.com/foxglove/foxglove-sdk/issues/667>`_)
+* Contributors: Chris Lalancette, Matthew Harrison
+
+3.2.0 (2025-09-22)
+------------------
+* Rewrite of foxglove_bridge to use the Foxglove SDK (various)
+* fix errors on bridge shutdown (`#640 <https://github.com/foxglove/foxglove-sdk/issues/640>`_)
+* Contributors: Eric Lujan, Hans-Joachim Krauch
+
 0.8.5 (2025-05-15)
 ------------------
 * fix rolling/kilted builds due to resource_retriever API changes (`#351 <https://github.com/foxglove/ros-foxglove-bridge/issues/351>`_)
