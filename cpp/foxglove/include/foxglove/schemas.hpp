@@ -211,12 +211,15 @@ struct CameraCalibration {
   /// @brief Name of distortion model
   /// @brief
   /// @brief Supported parameters: `plumb_bob` (k1, k2, p1, p2, k3), `rational_polynomial` (k1, k2,
-  /// p1, p2, k3, k4, k5, k6), and `kannala_brandt` (k1, k2, k3, k4). `plumb_bob` and
-  /// `rational_polynomial` models are based on the pinhole model
-  /// [OpenCV's](https://docs.opencv.org/4.11.0/d9/d0c/group__calib3d.html) [pinhole camera
+  /// p1, p2, k3, k4, k5, k6), and `kannala_brandt` (k1, k2, k3, k4), and `fisheye62` (k0, k1, k2,
+  /// k3, p0, p1, crit_theta [optional]). `plumb_bob` and `rational_polynomial` models are based on
+  /// the pinhole model [OpenCV's](https://docs.opencv.org/4.11.0/d9/d0c/group__calib3d.html)
+  /// [pinhole camera
   /// model](https://en.wikipedia.org/wiki/Distortion_%28optics%29#Software_correction). The
   /// `kannala_brandt` model matches the [OpenvCV
-  /// fisheye](https://docs.opencv.org/4.11.0/db/d58/group__calib3d__fisheye.html) model.
+  /// fisheye](https://docs.opencv.org/4.11.0/db/d58/group__calib3d__fisheye.html) model. The
+  /// `fisheye62` model matches the [Project Aria's Fisheye62
+  /// Model](https://facebookresearch.github.io/projectaria_tools/docs/tech_insights/camera_intrinsic_models).
   std::string distortion_model;
 
   /// @brief Distortion parameters
@@ -262,11 +265,7 @@ struct CameraCalibration {
   /// @brief For monocular cameras, Tx = Ty = 0. Normally, monocular cameras will also have R = the
   /// identity and P[1:3,1:3] = K.
   /// @brief
-  /// @brief For a stereo pair, the fourth column [Tx Ty 0]' is related to the position of the
-  /// optical center of the second camera in the first camera's frame. We assume Tz = 0 so both
-  /// cameras are in the same stereo image plane. The first camera always has Tx = Ty = 0. For the
-  /// right (second) camera of a horizontal stereo pair, Ty = 0 and Tx = -fx' * B, where B is the
-  /// baseline between the cameras.
+  /// @brief Foxglove currently does not support displaying stereo images, so Tx and Ty are ignored.
   /// @brief
   /// @brief Given a 3D point [X Y Z]', the projection (x, y) of the point onto the rectified image
   /// is given by:
@@ -741,15 +740,58 @@ struct Grid {
   /// @brief Number of bytes between cells within a row in `data`
   uint32_t cell_stride = 0;
 
-  /// @brief Fields in `data`. `red`, `green`, `blue`, and `alpha` are optional for customizing the
+  /// @brief Fields in `data`. S`red`, `green`, `blue`, and `alpha` are optional for customizing the
   /// grid's color.
+  /// @brief To enable RGB color visualization in the [3D
+  /// panel](https://docs.foxglove.dev/docs/visualization/panels/3d#rgba-separate-fields-color-mode),
+  /// include **all four** of these fields in your `fields` array:
+  /// @brief
+  /// @brief - `red` - Red channel value
+  /// @brief - `green` - Green channel value
+  /// @brief - `blue` - Blue channel value
+  /// @brief - `alpha` - Alpha/transparency channel value
+  /// @brief
+  /// @brief **note:** All four fields must be present with these exact names for RGB visualization
+  /// to work. The order of fields doesn't matter, but the names must match exactly.
+  /// @brief
+  /// @brief Recommended type: `UINT8` (0-255 range) for standard 8-bit color channels.
+  /// @brief
+  /// @brief Example field definitions:
+  /// @brief
+  /// @brief **RGB color only:**
+  /// @brief
+  /// @brief ```javascript
+  /// @brief fields: [
+  /// @brief  { name: "red", offset: 0, type: NumericType.UINT8 },
+  /// @brief  { name: "green", offset: 1, type: NumericType.UINT8 },
+  /// @brief  { name: "blue", offset: 2, type: NumericType.UINT8 },
+  /// @brief  { name: "alpha", offset: 3, type: NumericType.UINT8 },
+  /// @brief ];
+  /// @brief ```
+  /// @brief
+  /// @brief **RGB color with elevation (for 3D terrain visualization):**
+  /// @brief
+  /// @brief ```javascript
+  /// @brief fields: [
+  /// @brief  { name: "red", offset: 0, type: NumericType.UINT8 },
+  /// @brief  { name: "green", offset: 1, type: NumericType.UINT8 },
+  /// @brief  { name: "blue", offset: 2, type: NumericType.UINT8 },
+  /// @brief  { name: "alpha", offset: 3, type: NumericType.UINT8 },
+  /// @brief  { name: "elevation", offset: 4, type: NumericType.FLOAT32 },
+  /// @brief ];
+  /// @brief ```
+  /// @brief
+  /// @brief When these fields are present, the 3D panel will offer additional "Color Mode" options
+  /// including "RGBA (separate fields)" to visualize the RGB data directly. For elevation
+  /// visualization, set the "Elevation field" to your elevation layer name.
   std::vector<PackedElementField> fields;
 
   /// @brief Grid cell data, interpreted using `fields`, in row-major (y-major) order.
-  /// @brief  For the data element starting at byte offset i, the coordinates of its corner closest
+  /// @brief For the data element starting at byte offset i, the coordinates of its corner closest
   /// to the origin will be:
-  /// @brief  y = (i / cell_stride) % row_stride * cell_size.y
-  /// @brief  x = i % cell_stride * cell_size.x
+  /// @brief
+  /// @brief - y = i / row_stride * cell_size.y
+  /// @brief - x = (i % row_stride) / cell_stride * cell_size.x
   std::vector<std::byte> data;
 
   /// @brief Encoded the Grid as protobuf to the provided buffer.
@@ -805,11 +847,12 @@ struct VoxelGrid {
   std::vector<PackedElementField> fields;
 
   /// @brief Grid cell data, interpreted using `fields`, in depth-major, row-major (Z-Y-X) order.
-  /// @brief  For the data element starting at byte offset i, the coordinates of its corner closest
+  /// @brief For the data element starting at byte offset i, the coordinates of its corner closest
   /// to the origin will be:
-  /// @brief  z = i / slice_stride * cell_size.z
-  /// @brief  y = (i % slice_stride) / row_stride * cell_size.y
-  /// @brief  x = (i % row_stride) / cell_stride * cell_size.x
+  /// @brief
+  /// @brief - z = i / slice_stride * cell_size.z
+  /// @brief - y = (i % slice_stride) / row_stride * cell_size.y
+  /// @brief - x = (i % row_stride) / cell_stride * cell_size.x
   std::vector<std::byte> data;
 
   /// @brief Encoded the VoxelGrid as protobuf to the provided buffer.
@@ -1089,11 +1132,10 @@ struct LinePrimitive {
   /// @brief Points along the line
   std::vector<Point3> points;
 
-  /// @brief Solid color to use for the whole line. One of `color` or `colors` must be provided.
+  /// @brief Solid color to use for the whole line. Ignored if `colors` is non-empty.
   std::optional<Color> color;
 
-  /// @brief Per-point colors (if specified, must have the same length as `points`). One of `color`
-  /// or `colors` must be provided.
+  /// @brief Per-point colors (if non-empty, must have the same length as `points`).
   std::vector<Color> colors;
 
   /// @brief Indices into the `points` and `colors` attribute arrays, which can be used to avoid
@@ -1334,11 +1376,10 @@ struct TriangleListPrimitive {
   /// @brief Vertices to use for triangles, interpreted as a list of triples (0-1-2, 3-4-5, ...)
   std::vector<Point3> points;
 
-  /// @brief Solid color to use for the whole shape. One of `color` or `colors` must be provided.
+  /// @brief Solid color to use for the whole shape. Ignored if `colors` is non-empty.
   std::optional<Color> color;
 
-  /// @brief Per-vertex colors (if specified, must have the same length as `points`). One of `color`
-  /// or `colors` must be provided.
+  /// @brief Per-vertex colors (if specified, must have the same length as `points`).
   std::vector<Color> colors;
 
   /// @brief Indices into the `points` and `colors` attribute arrays, which can be used to avoid
@@ -1424,7 +1465,7 @@ struct ModelPrimitive {
   /// original model.
   bool override_color = false;
 
-  /// @brief URL pointing to model file. One of `url` or `data` should be provided.
+  /// @brief URL pointing to model file. One of `url` or `data` should be non-empty.
   std::string url;
 
   /// @brief [Media
@@ -1433,7 +1474,7 @@ struct ModelPrimitive {
   /// the inferred media type if `url` is provided.
   std::string media_type;
 
-  /// @brief Embedded model. One of `url` or `data` should be provided. If `data` is provided,
+  /// @brief Embedded model. One of `url` or `data` should be non-empty. If `data` is non-empty,
   /// `media_type` must be set to indicate the type of the data.
   std::vector<std::byte> data;
 
@@ -1755,7 +1796,7 @@ struct RawImage {
   /// @brief   - Pixel brightness is represented as a single-channel, 32-bit little-endian IEEE 754
   /// floating-point value, ranging from 0.0 (black) to 1.0 (white).
   /// @brief   - `step` must be greater than or equal to `width` * 4.
-  /// @brief - `bayer_rggb8`, `bayer_bggr8`, `bayer_rggb8`, `bayer_gbrg8`, or `bayer_grgb8`:
+  /// @brief - `bayer_rggb8`, `bayer_bggr8`, `bayer_gbrg8`, or `bayer_grbg8`:
   /// @brief   - Pixel colors are decomposed into Red, Blue and Green channels.
   /// @brief   - Pixel channel values are represented as unsigned 8-bit integers, and serialized in
   /// a 2x2 bayer filter pattern.
@@ -1834,10 +1875,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   ArrowPrimitiveChannel(const ArrowPrimitiveChannel& other) noexcept = delete;
   ArrowPrimitiveChannel& operator=(const ArrowPrimitiveChannel& other) noexcept = delete;
@@ -1882,10 +1936,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   CameraCalibrationChannel(const CameraCalibrationChannel& other) noexcept = delete;
   CameraCalibrationChannel& operator=(const CameraCalibrationChannel& other) noexcept = delete;
@@ -1930,10 +1997,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   CircleAnnotationChannel(const CircleAnnotationChannel& other) noexcept = delete;
   CircleAnnotationChannel& operator=(const CircleAnnotationChannel& other) noexcept = delete;
@@ -1978,10 +2058,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   ColorChannel(const ColorChannel& other) noexcept = delete;
   ColorChannel& operator=(const ColorChannel& other) noexcept = delete;
@@ -2026,10 +2119,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   CompressedImageChannel(const CompressedImageChannel& other) noexcept = delete;
   CompressedImageChannel& operator=(const CompressedImageChannel& other) noexcept = delete;
@@ -2074,10 +2180,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   CompressedVideoChannel(const CompressedVideoChannel& other) noexcept = delete;
   CompressedVideoChannel& operator=(const CompressedVideoChannel& other) noexcept = delete;
@@ -2122,10 +2241,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   CylinderPrimitiveChannel(const CylinderPrimitiveChannel& other) noexcept = delete;
   CylinderPrimitiveChannel& operator=(const CylinderPrimitiveChannel& other) noexcept = delete;
@@ -2170,10 +2302,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   CubePrimitiveChannel(const CubePrimitiveChannel& other) noexcept = delete;
   CubePrimitiveChannel& operator=(const CubePrimitiveChannel& other) noexcept = delete;
@@ -2218,10 +2363,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   FrameTransformChannel(const FrameTransformChannel& other) noexcept = delete;
   FrameTransformChannel& operator=(const FrameTransformChannel& other) noexcept = delete;
@@ -2266,10 +2424,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   FrameTransformsChannel(const FrameTransformsChannel& other) noexcept = delete;
   FrameTransformsChannel& operator=(const FrameTransformsChannel& other) noexcept = delete;
@@ -2314,10 +2485,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   GeoJSONChannel(const GeoJSONChannel& other) noexcept = delete;
   GeoJSONChannel& operator=(const GeoJSONChannel& other) noexcept = delete;
@@ -2362,10 +2546,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   GridChannel(const GridChannel& other) noexcept = delete;
   GridChannel& operator=(const GridChannel& other) noexcept = delete;
@@ -2410,10 +2607,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   VoxelGridChannel(const VoxelGridChannel& other) noexcept = delete;
   VoxelGridChannel& operator=(const VoxelGridChannel& other) noexcept = delete;
@@ -2458,10 +2668,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   ImageAnnotationsChannel(const ImageAnnotationsChannel& other) noexcept = delete;
   ImageAnnotationsChannel& operator=(const ImageAnnotationsChannel& other) noexcept = delete;
@@ -2506,10 +2729,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   KeyValuePairChannel(const KeyValuePairChannel& other) noexcept = delete;
   KeyValuePairChannel& operator=(const KeyValuePairChannel& other) noexcept = delete;
@@ -2554,10 +2790,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   LaserScanChannel(const LaserScanChannel& other) noexcept = delete;
   LaserScanChannel& operator=(const LaserScanChannel& other) noexcept = delete;
@@ -2602,10 +2851,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   LinePrimitiveChannel(const LinePrimitiveChannel& other) noexcept = delete;
   LinePrimitiveChannel& operator=(const LinePrimitiveChannel& other) noexcept = delete;
@@ -2650,10 +2912,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   LocationFixChannel(const LocationFixChannel& other) noexcept = delete;
   LocationFixChannel& operator=(const LocationFixChannel& other) noexcept = delete;
@@ -2698,10 +2973,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   LocationFixesChannel(const LocationFixesChannel& other) noexcept = delete;
   LocationFixesChannel& operator=(const LocationFixesChannel& other) noexcept = delete;
@@ -2746,10 +3034,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   LogChannel(const LogChannel& other) noexcept = delete;
   LogChannel& operator=(const LogChannel& other) noexcept = delete;
@@ -2794,10 +3095,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   SceneEntityDeletionChannel(const SceneEntityDeletionChannel& other) noexcept = delete;
   SceneEntityDeletionChannel& operator=(const SceneEntityDeletionChannel& other) noexcept = delete;
@@ -2842,10 +3156,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   SceneEntityChannel(const SceneEntityChannel& other) noexcept = delete;
   SceneEntityChannel& operator=(const SceneEntityChannel& other) noexcept = delete;
@@ -2890,10 +3217,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   SceneUpdateChannel(const SceneUpdateChannel& other) noexcept = delete;
   SceneUpdateChannel& operator=(const SceneUpdateChannel& other) noexcept = delete;
@@ -2938,10 +3278,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   ModelPrimitiveChannel(const ModelPrimitiveChannel& other) noexcept = delete;
   ModelPrimitiveChannel& operator=(const ModelPrimitiveChannel& other) noexcept = delete;
@@ -2986,10 +3339,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   PackedElementFieldChannel(const PackedElementFieldChannel& other) noexcept = delete;
   PackedElementFieldChannel& operator=(const PackedElementFieldChannel& other) noexcept = delete;
@@ -3034,10 +3400,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   Point2Channel(const Point2Channel& other) noexcept = delete;
   Point2Channel& operator=(const Point2Channel& other) noexcept = delete;
@@ -3082,10 +3461,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   Point3Channel(const Point3Channel& other) noexcept = delete;
   Point3Channel& operator=(const Point3Channel& other) noexcept = delete;
@@ -3130,10 +3522,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   PointCloudChannel(const PointCloudChannel& other) noexcept = delete;
   PointCloudChannel& operator=(const PointCloudChannel& other) noexcept = delete;
@@ -3178,10 +3583,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   PointsAnnotationChannel(const PointsAnnotationChannel& other) noexcept = delete;
   PointsAnnotationChannel& operator=(const PointsAnnotationChannel& other) noexcept = delete;
@@ -3226,10 +3644,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   PoseChannel(const PoseChannel& other) noexcept = delete;
   PoseChannel& operator=(const PoseChannel& other) noexcept = delete;
@@ -3274,10 +3705,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   PoseInFrameChannel(const PoseInFrameChannel& other) noexcept = delete;
   PoseInFrameChannel& operator=(const PoseInFrameChannel& other) noexcept = delete;
@@ -3322,10 +3766,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   PosesInFrameChannel(const PosesInFrameChannel& other) noexcept = delete;
   PosesInFrameChannel& operator=(const PosesInFrameChannel& other) noexcept = delete;
@@ -3370,10 +3827,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   QuaternionChannel(const QuaternionChannel& other) noexcept = delete;
   QuaternionChannel& operator=(const QuaternionChannel& other) noexcept = delete;
@@ -3418,10 +3888,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   RawAudioChannel(const RawAudioChannel& other) noexcept = delete;
   RawAudioChannel& operator=(const RawAudioChannel& other) noexcept = delete;
@@ -3466,10 +3949,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   RawImageChannel(const RawImageChannel& other) noexcept = delete;
   RawImageChannel& operator=(const RawImageChannel& other) noexcept = delete;
@@ -3514,10 +4010,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   SpherePrimitiveChannel(const SpherePrimitiveChannel& other) noexcept = delete;
   SpherePrimitiveChannel& operator=(const SpherePrimitiveChannel& other) noexcept = delete;
@@ -3562,10 +4071,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   TextAnnotationChannel(const TextAnnotationChannel& other) noexcept = delete;
   TextAnnotationChannel& operator=(const TextAnnotationChannel& other) noexcept = delete;
@@ -3610,10 +4132,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   TextPrimitiveChannel(const TextPrimitiveChannel& other) noexcept = delete;
   TextPrimitiveChannel& operator=(const TextPrimitiveChannel& other) noexcept = delete;
@@ -3658,10 +4193,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   TriangleListPrimitiveChannel(const TriangleListPrimitiveChannel& other) noexcept = delete;
   TriangleListPrimitiveChannel& operator=(const TriangleListPrimitiveChannel& other
@@ -3707,10 +4255,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   Vector2Channel(const Vector2Channel& other) noexcept = delete;
   Vector2Channel& operator=(const Vector2Channel& other) noexcept = delete;
@@ -3755,10 +4316,23 @@ public:
     std::optional<uint64_t> sink_id = std::nullopt
   ) noexcept;
 
+  /// @brief Close the channel.
+  ///
+  /// You can use this to explicitly unadvertise the channel to sinks that subscribe to channels
+  /// dynamically, such as the WebSocketServer.
+  ///
+  /// Attempts to log on a closed channel will elicit a throttled warning message.
+  void close() noexcept;
+
   /// @brief Uniquely identifies a channel in the context of this program.
   ///
   /// @return The ID of the channel.
   [[nodiscard]] uint64_t id() const noexcept;
+
+  /// @brief Find out if any sinks have been added to the channel.
+  ///
+  /// @return True if sinks have been added to the channel, false otherwise.
+  [[nodiscard]] bool has_sinks() const noexcept;
 
   Vector3Channel(const Vector3Channel& other) noexcept = delete;
   Vector3Channel& operator=(const Vector3Channel& other) noexcept = delete;
