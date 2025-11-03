@@ -1,7 +1,0 @@
-/.git/
-/.mypy_cache/
-/node_modules/
-/target/
-/ros/install/
-/ros/log/
-/ros/build/
