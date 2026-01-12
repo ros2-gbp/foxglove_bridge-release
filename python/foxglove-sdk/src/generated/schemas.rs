@@ -866,7 +866,7 @@ impl From<GeoJson> for foxglove::schemas::GeoJson {
 /// :param cell_size: Size of single grid cell along x and y axes, relative to `pose`
 /// :param row_stride: Number of bytes between rows in `data`
 /// :param cell_stride: Number of bytes between cells within a row in `data`
-/// :param fields: Fields in `data`. S`red`, `green`, `blue`, and `alpha` are optional for customizing the grid's color.
+/// :param fields: Fields in `data`. `red`, `green`, `blue`, and `alpha` are optional for customizing the grid's color.
 ///     To enable RGB color visualization in the `3D panel <https://docs.foxglove.dev/docs/visualization/panels/3d#rgba-separate-fields-color-mode>`__, include **all four** of these fields in your `fields` array:
 ///     
 ///     - `red` - Red channel value
@@ -992,7 +992,7 @@ impl From<Grid> for foxglove::schemas::Grid {
 ///
 /// :param timestamp: Timestamp of grid
 /// :param frame_id: Frame of reference
-/// :param pose: Origin of grid's corner relative to frame of reference
+/// :param pose: Origin of the grid’s lower-front-left corner in the reference frame. The grid’s pose is defined relative to this corner, so an untransformed grid with an identity orientation has this corner at the origin.
 /// :param row_count: Number of grid rows
 /// :param column_count: Number of grid columns
 /// :param cell_size: Size of single grid cell along x, y, and z axes, relative to `pose`

@@ -67,6 +67,15 @@
 #define FOXGLOVE_SERVER_CAPABILITY_ASSETS (1 << 5)
 #endif
 
+#if !defined(__wasm__)
+/**
+ * Indicates that the server is sending data within a fixed time range. This requires the
+ * server to specify the `data_start_time` and `data_end_time` fields in
+ * `foxglove_server_options`.
+ */
+#define FOXGLOVE_SERVER_CAPABILITY_RANGED_PLAYBACK (1 << 6)
+#endif
+
 enum foxglove_error
 #ifdef __cplusplus
   : uint8_t
@@ -887,7 +896,7 @@ typedef struct foxglove_grid {
    */
   uint32_t cell_stride;
   /**
-   * Fields in `data`. S`red`, `green`, `blue`, and `alpha` are optional for customizing the grid's color.
+   * Fields in `data`. `red`, `green`, `blue`, and `alpha` are optional for customizing the grid's color.
    * To enable RGB color visualization in the [3D panel](https://docs.foxglove.dev/docs/visualization/panels/3d#rgba-separate-fields-color-mode), include **all four** of these fields in your `fields` array:
    *
    * - `red` - Red channel value
@@ -952,7 +961,7 @@ typedef struct foxglove_voxel_grid {
    */
   struct foxglove_string frame_id;
   /**
-   * Origin of grid's corner relative to frame of reference
+   * Origin of the grid’s lower-front-left corner in the reference frame. The grid’s pose is defined relative to this corner, so an untransformed grid with an identity orientation has this corner at the origin.
    */
   const struct foxglove_pose *pose;
   /**
@@ -1696,6 +1705,36 @@ typedef struct foxglove_raw_image {
 } foxglove_raw_image;
 
 #if !defined(__wasm__)
+/**
+ * Custom writer function pointers for MCAP writing.
+ * write_fn and flush_fn must be non-null. Seek_fn may be null iff `disable_seeking` is set to true.
+ * These function pointers may be called from multiple threads.
+ * These functions are called synchronously with respect to each other within the SDK, but these
+ * calls are not synchronized with other SDK function calls.
+ */
+typedef struct foxglove_custom_writer {
+  /**
+   * User-provided context pointer, passed to all callback functions
+   */
+  void *context;
+  /**
+   * Write function: write data to the custom destination
+   * Returns number of bytes written, or sets error on failure
+   */
+  size_t (*write_fn)(void *context, const uint8_t *data, size_t len, int32_t *error);
+  /**
+   * Flush function: ensure all buffered data is written
+   */
+  int32_t (*flush_fn)(void *context);
+  /**
+   * Seek function: change the current position in the stream
+   * whence: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END
+   */
+  int32_t (*seek_fn)(void *context, int64_t pos, int whence, uint64_t *new_pos);
+} foxglove_custom_writer;
+#endif
+
+#if !defined(__wasm__)
 typedef struct foxglove_mcap_options {
   /**
    * `context` can be null, or a valid pointer to a context created via `foxglove_context_new`.
@@ -1704,6 +1743,10 @@ typedef struct foxglove_mcap_options {
   const struct foxglove_context *context;
   struct foxglove_string path;
   bool truncate;
+  /**
+   * Custom writer for arbitrary destinations. If non-null, `path` is ignored.
+   */
+  const struct foxglove_custom_writer *custom_writer;
   foxglove_mcap_compression compression;
   struct foxglove_string profile;
   /**
@@ -2022,6 +2065,55 @@ typedef struct foxglove_parameter_array {
 #endif
 
 #if !defined(__wasm__)
+typedef struct foxglove_playback_control_request {
+  /**
+   * Playback command
+   */
+  uint8_t playback_command;
+  /**
+   * Playback speed
+   */
+  float playback_speed;
+  /**
+   * Seek playback time in nanoseconds (only set if a seek has been performed)
+   */
+  const uint64_t *seek_time;
+  /**
+   * Unique string identifier, used to indicate that a PlaybackState is in response to a particular request from the client.
+   * Should not be an empty string.
+   */
+  struct foxglove_string request_id;
+} foxglove_playback_control_request;
+#endif
+
+#if !defined(__wasm__)
+typedef struct foxglove_playback_state {
+  /**
+   * The status of server data playback
+   */
+  uint8_t status;
+  /**
+   * The current time of playback, in absolute nanoseconds
+   */
+  uint64_t current_time;
+  /**
+   * The speed of playback, as a factor of realtime
+   */
+  float playback_speed;
+  /**
+   * Whether a seek forward or backward in time triggered this message to be emitted
+   */
+  bool did_seek;
+  /**
+   * If this message is being emitted in response to a PlaybackControlRequest message, the
+   * request_id from that message. Set this to an empty string if the state of playback has been changed
+   * by any other condition.
+   */
+  struct foxglove_string request_id;
+} foxglove_playback_state;
+#endif
+
+#if !defined(__wasm__)
 typedef struct foxglove_server_callbacks {
   /**
    * A user-defined value that will be passed to callback functions
@@ -2111,6 +2203,19 @@ typedef struct foxglove_server_callbacks {
                                     size_t param_names_len);
   void (*on_connection_graph_subscribe)(const void *context);
   void (*on_connection_graph_unsubscribe)(const void *context);
+  /**
+   * Callback invoked when a client sends a playback control request message.
+   *
+   * Requires `FOXGLOVE_CAPABILITY_RANGED_PLAYBACK`.
+   *
+   * `playback_control_request` is an input parameter and guaranteed to be non-NULL.
+   * `playback_state` is a non-NULL output pointer to a struct that has already been allocated.
+   * The caller should fill its fields with the appropriate state of playback, in response to
+   * the input playback control request.
+   */
+  void (*on_playback_control_request)(const void *context,
+                                      const struct foxglove_playback_control_request *playback_control_request,
+                                      struct foxglove_playback_state *playback_state);
 } foxglove_server_callbacks;
 #endif
 
@@ -2201,6 +2306,16 @@ typedef struct foxglove_server_options {
    *   and must remain valid until the server is stopped.
    */
   bool (*sink_channel_filter)(const void *context, const struct foxglove_channel_descriptor *channel);
+  /**
+   * If the server is sending data from a fixed time range, and has the RangedPlayback capability,
+   * the start time of the data range.
+   */
+  const uint64_t *playback_start_time;
+  /**
+   * If the server is sending data from a fixed time range, and has the RangedPlayback capability,
+   * the end time of the data range.
+   */
+  const uint64_t *playback_end_time;
 } foxglove_server_options;
 #endif
 
@@ -4172,14 +4287,19 @@ foxglove_error foxglove_vector3_encode(const struct foxglove_vector3 *msg,
 
 #if !defined(__wasm__)
 /**
- * Create or open an MCAP file for writing.
+ * Create or open an MCAP writer for writing to a file or custom destination.
  * Resources must later be freed with `foxglove_mcap_close`.
+ *
+ * If `custom_writer` is provided, the MCAP data will be written using the provided
+ * function pointers instead of to a file.
  *
  * Returns 0 on success, or returns a FoxgloveError code on error.
  *
  * # Safety
  * `path` and `profile` must contain valid UTF8. If `context` is non-null,
  * it must have been created by `foxglove_context_new`.
+ * If `custom_writer` is non-null, its function pointers must be valid and
+ * all `context` pointers must remain valid for the lifetime of the writer.
  */
 foxglove_error foxglove_mcap_open(const struct foxglove_mcap_options *FOXGLOVE_NONNULL options,
                                   struct foxglove_mcap_writer **writer);
@@ -5102,6 +5222,19 @@ foxglove_error foxglove_server_start(const struct foxglove_server_options *FOXGL
  */
 foxglove_error foxglove_server_broadcast_time(const struct foxglove_websocket_server *server,
                                               uint64_t timestamp_nanos);
+#endif
+
+#if !defined(__wasm__)
+/**
+ * Publishes the current playback state to all clients.
+ *
+ * Requires the `FOXGLOVE_CAPABILITY_RANGED_PLAYBACK` capability.
+ *
+ * # Safety
+ * - `playback_state` must be a valid pointer to a playback state that lives for the duration of the call.
+ */
+foxglove_error foxglove_server_broadcast_playback_state(const struct foxglove_websocket_server *server,
+                                                        const struct foxglove_playback_state *playback_state);
 #endif
 
 #if !defined(__wasm__)

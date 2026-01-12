@@ -333,6 +333,9 @@ mod testutil;
 mod throttler;
 mod time;
 
+#[cfg(feature = "stream")]
+pub mod stream;
+
 pub use app_url::AppUrl;
 // Re-export bytes crate for convenience when implementing the `Encode` trait
 pub use bytes;
@@ -342,7 +345,9 @@ pub use context::{Context, LazyContext};
 #[doc(hidden)]
 pub use decode::Decode;
 pub use encode::Encode;
-pub use mcap_writer::{McapCompression, McapWriteOptions, McapWriter, McapWriterHandle};
+pub use mcap_writer::{
+    McapAttachment, McapCompression, McapWriteOptions, McapWriter, McapWriterHandle,
+};
 pub use metadata::{Metadata, PartialMetadata, ToUnixNanos};
 pub use schema::Schema;
 pub use sink::{Sink, SinkId};

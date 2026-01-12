@@ -1116,7 +1116,7 @@ Number of bytes between cells within a row in `data`
 </td>
 <td>
 
-Fields in `data`. S`red`, `green`, `blue`, and `alpha` are optional for customizing the grid's color.
+Fields in `data`. `red`, `green`, `blue`, and `alpha` are optional for customizing the grid's color.
 To enable RGB color visualization in the [3D panel](https://docs.foxglove.dev/docs/visualization/panels/3d#rgba-separate-fields-color-mode), include **all four** of these fields in your `fields` array:
 
 - `red` - Red channel value
@@ -3357,7 +3357,7 @@ Frame of reference
 </td>
 <td>
 
-Origin of grid's corner relative to frame of reference
+Origin of the grid’s lower-front-left corner in the reference frame. The grid’s pose is defined relative to this corner, so an untransformed grid with an identity orientation has this corner at the origin.
 
 </td>
 </tr>
