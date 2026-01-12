@@ -697,7 +697,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "serde_json",
  "tokio",
 ]
@@ -707,8 +707,8 @@ name = "example_channelless"
 version = "0.0.0"
 dependencies = [
  "env_logger",
- "foxglove 0.15.2",
- "mcap",
+ "foxglove 0.16.2",
+ "mcap 0.24.0",
  "schemars 1.0.4",
  "serde",
 ]
@@ -719,7 +719,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -732,7 +732,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "schemars 1.0.4",
  "serde",
 ]
@@ -743,7 +743,7 @@ version = "0.0.0"
 dependencies = [
  "ctrlc",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
 ]
 
 [[package]]
@@ -752,7 +752,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "tokio",
  "tokio-util",
 ]
@@ -761,7 +761,7 @@ dependencies = [
 name = "example_prost"
 version = "0.0.0"
 dependencies = [
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "prost",
  "prost-build",
 ]
@@ -772,16 +772,16 @@ version = "0.0.0"
 dependencies = [
  "ctrlc",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
 ]
 
 [[package]]
 name = "example_structured_logging"
-version = "0.15.2"
+version = "0.16.2"
 dependencies = [
  "bytes",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -793,7 +793,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "quaternion",
  "tokio",
 ]
@@ -805,7 +805,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
 ]
 
 [[package]]
@@ -814,7 +814,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "tokio",
 ]
 
@@ -826,7 +826,7 @@ dependencies = [
  "bytes",
  "clap",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "futures",
  "parking_lot",
  "schemars 1.0.4",
@@ -847,8 +847,8 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
- "foxglove 0.15.2",
- "mcap",
+ "foxglove 0.16.2",
+ "mcap 0.24.0",
  "tracing",
 ]
 
@@ -899,7 +899,7 @@ dependencies = [
  "bytes",
  "delegate",
  "foxglove_derive 0.9.1",
- "mcap",
+ "mcap 0.23.4",
  "parking_lot",
  "prost",
  "prost-types",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "foxglove"
-version = "0.15.2"
+version = "0.16.2"
 dependencies = [
  "arc-swap",
  "assert_matches",
@@ -925,11 +925,12 @@ dependencies = [
  "chrono",
  "delegate",
  "flume",
- "foxglove_derive 0.15.2",
+ "foxglove_derive 0.16.2",
+ "futures",
  "futures-util",
  "insta",
  "maplit",
- "mcap",
+ "mcap 0.24.0",
  "parking_lot",
  "prost",
  "prost-types",
@@ -954,11 +955,11 @@ dependencies = [
 
 [[package]]
 name = "foxglove-sdk-python"
-version = "0.15.2"
+version = "0.16.2"
 dependencies = [
  "base64",
  "bytes",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "log",
  "maplit",
  "prost-types",
@@ -974,16 +975,16 @@ dependencies = [
 
 [[package]]
 name = "foxglove_c"
-version = "0.15.2"
+version = "0.16.2"
 dependencies = [
  "base64",
  "bitflags",
  "cbindgen",
  "env_logger",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "log",
  "maplit",
- "mcap",
+ "mcap 0.24.0",
  "tracing",
 ]
 
@@ -1013,10 +1014,10 @@ dependencies = [
 
 [[package]]
 name = "foxglove_derive"
-version = "0.15.2"
+version = "0.16.2"
 dependencies = [
  "bytes",
- "foxglove 0.15.2",
+ "foxglove 0.16.2",
  "proc-macro2",
  "prost",
  "prost-reflect",
@@ -1501,9 +1502,27 @@ dependencies = [
 
 [[package]]
 name = "mcap"
-version = "0.23.2"
+version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d232d57c96a84a7ef13f6e9035520d911ab1359b107a7266a57149175b9f0034"
+checksum = "2a3ca583fed649ed7cd8c976b59422996472c6b08067308443e0b60c56e0a4ca"
+dependencies = [
+ "bimap",
+ "binrw",
+ "byteorder",
+ "crc32fast",
+ "enumset",
+ "log",
+ "num_cpus",
+ "paste",
+ "static_assertions",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mcap"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43908ab970f3a880b02834055a1e04221a3056f442a65ae9111f63e550e7daa5"
 dependencies = [
  "bimap",
  "binrw",
@@ -2676,9 +2695,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.27.0"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "489a59b6730eda1b0171fcfda8b121f4bee2b35cba8645ca35c5f7ba3eb736c1"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
@@ -2830,9 +2849,9 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.27.0"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eadc29d668c91fcc564941132e17b28a7ceb2f3ebf0b9dae3e03fd7a6748eb0d"
+checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
 dependencies = [
  "bytes",
  "data-encoding",
@@ -2944,7 +2963,7 @@ version = "0.14.2+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
 dependencies = [
- "wit-bindgen-rt 0.39.0",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -3007,9 +3026,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-encoder"
-version = "0.235.0"
+version = "0.243.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3bc393c395cb621367ff02d854179882b9a351b4e0c93d1397e6090b53a5c2a"
+checksum = "c55db9c896d70bd9fa535ce83cd4e1f2ec3726b0edd2142079f594fc3be1cb35"
 dependencies = [
  "leb128fmt",
  "wasmparser",
@@ -3017,9 +3036,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-metadata"
-version = "0.235.0"
+version = "0.243.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b055604ba04189d54b8c0ab2c2fc98848f208e103882d5c0b984f045d5ea4d20"
+checksum = "eae05bf9579f45a62e8d0a4e3f52eaa8da518883ac5afa482ec8256c329ecd56"
 dependencies = [
  "anyhow",
  "indexmap 2.10.0",
@@ -3029,9 +3048,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.235.0"
+version = "0.243.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "161296c618fa2d63f6ed5fffd1112937e803cb9ec71b32b01a76321555660917"
+checksum = "f6d8db401b0528ec316dfbe579e6ab4152d61739cfe076706d2009127970159d"
 dependencies = [
  "bitflags",
  "hashbrown 0.15.5",
@@ -3286,19 +3305,19 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen"
-version = "0.43.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a18712ff1ec5bd09da500fe1e91dec11256b310da0ff33f8b4ec92b927cf0c6"
+checksum = "c64be1abfe5d4fdb2d41581fac134e8c9204da1e604b5500926478b7f264e36f"
 dependencies = [
- "wit-bindgen-rt 0.43.0",
+ "bitflags",
  "wit-bindgen-rust-macro",
 ]
 
 [[package]]
 name = "wit-bindgen-core"
-version = "0.43.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c53468e077362201de11999c85c07c36e12048a990a3e0d69da2bd61da355d0"
+checksum = "886e8e938e4e9fe54143c080cbb99d7db5d19242b62ef225dbb28e17b3223bd8"
 dependencies = [
  "anyhow",
  "heck",
@@ -3315,21 +3334,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wit-bindgen-rt"
-version = "0.43.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd734226eac1fd7c450956964e3a9094c9cee65e9dafdf126feef8c0096db65"
-dependencies = [
- "bitflags",
- "futures",
- "once_cell",
-]
-
-[[package]]
 name = "wit-bindgen-rust"
-version = "0.43.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531ebfcec48e56473805285febdb450e270fa75b2dacb92816861d0473b4c15f"
+checksum = "145cac8fb12d99aea13a3f9e0d07463fa030edeebab2c03805eda0e1cc229bba"
 dependencies = [
  "anyhow",
  "heck",
@@ -3343,9 +3351,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-rust-macro"
-version = "0.43.0"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7852bf8a9d1ea80884d26b864ddebd7b0c7636697c6ca10f4c6c93945e023966"
+checksum = "6042452ac4e58891cdb6321bb98aabb9827dbaf6f4e971734d8dd86813319aea"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -3358,9 +3366,9 @@ dependencies = [
 
 [[package]]
 name = "wit-component"
-version = "0.235.0"
+version = "0.243.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64a57a11109cc553396f89f3a38a158a97d0b1adaec113bd73e0f64d30fb601f"
+checksum = "36f9fc53513e461ce51dcf17a3e331752cb829f1d187069e54af5608fc998fe4"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -3377,9 +3385,9 @@ dependencies = [
 
 [[package]]
 name = "wit-parser"
-version = "0.235.0"
+version = "0.243.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a1f95a87d03a33e259af286b857a95911eb46236a0f726cbaec1227b3dfc67a"
+checksum = "df983a8608e513d8997f435bb74207bf0933d0e49ca97aa9d8a6157164b9b7fc"
 dependencies = [
  "anyhow",
  "id-arena",
