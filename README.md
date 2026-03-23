@@ -1,3 +1,28 @@
+## foxglove-sdk (humble) - 3.2.5-1
+
+The packages in the `foxglove-sdk` repository were released into the `humble` distro by running `/usr/bin/bloom-release foxglove-sdk --rosdistro humble` on `Mon, 23 Mar 2026 22:38:41 -0000`
+
+These packages were released:
+- `foxglove_bridge`
+- `foxglove_msgs`
+
+Version of package(s) in repository `foxglove-sdk`:
+
+- upstream repository: https://github.com/foxglove/foxglove-sdk.git
+- release repository: https://github.com/ros2-gbp/foxglove_bridge-release.git
+- rosdistro version: `3.2.4-1`
+- old version: `3.2.4-1`
+- new version: `3.2.5-1`
+
+Versions of tools used:
+
+- bloom version: `0.13.0`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.26.0`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## foxglove-sdk (rolling) - 3.2.4-1
 
 The packages in the `foxglove-sdk` repository were released into the `rolling` distro by running `/usr/bin/bloom-release -r rolling foxglove-sdk` on `Fri, 23 Jan 2026 17:50:49 -0000`
