@@ -59,7 +59,8 @@ function isSameAsCType(schema: FoxgloveMessageSchema): boolean {
     (field) =>
       field.type.type === "primitive" &&
       field.type.name !== "bytes" &&
-      field.type.name !== "string",
+      field.type.name !== "string" &&
+      !field.optional,
   );
 }
 
@@ -141,6 +142,7 @@ export function generateHppSchemas(
           switch (field.type.type) {
             case "enum":
               fieldType = field.type.enum.name;
+              defaultStr = "{}";
               break;
             case "nested":
               fieldType = field.type.schema.name;
@@ -157,8 +159,11 @@ export function generateHppSchemas(
             fieldType = `std::array<${fieldType}, ${field.array}>`;
           } else if (field.array) {
             fieldType = `std::vector<${fieldType}>`;
-          } else if (field.type.type === "nested") {
+          } else if (field.optional || field.type.type === "nested") {
             fieldType = `std::optional<${fieldType}>`;
+            if (field.optional && defaultStr !== "") {
+              defaultStr = " = std::nullopt";
+            }
           }
           return `${formatComment(field.description, 2)}\n  ${fieldType} ${toSnakeCase(field.name)}${defaultStr};`;
         })
@@ -228,7 +233,14 @@ export function generateHppSchemas(
         /// @brief Find out if any sinks have been added to the channel.
         ///
         /// @return True if sinks have been added to the channel, false otherwise.
-        [[nodiscard]] bool has_sinks() const noexcept;
+        [[nodiscard]] bool hasSinks() const noexcept;
+
+        /// @deprecated Use hasSinks() instead.
+        // NOLINTNEXTLINE(readability-identifier-naming)
+        [[deprecated("Use hasSinks() instead")]]
+        [[nodiscard]] bool has_sinks() const noexcept {
+          return hasSinks();
+        }
 
         ${schema.name}Channel(const ${schema.name}Channel& other) noexcept = delete;
         ${schema.name}Channel& operator=(const ${schema.name}Channel& other) noexcept = delete;
@@ -270,7 +282,7 @@ export function generateHppSchemas(
     "  void operator()(const foxglove_channel* ptr) const noexcept;",
     "};",
     "/// @brief A unique pointer to a C foxglove_channel pointer. For internal use only.",
-    "typedef std::unique_ptr<const foxglove_channel, ChannelDeleter> ChannelUniquePtr;",
+    "using ChannelUniquePtr = std::unique_ptr<const foxglove_channel, ChannelDeleter>;",
   ];
 
   const outputSections = [
@@ -281,14 +293,14 @@ export function generateHppSchemas(
 
     "struct foxglove_channel;",
 
-    "namespace foxglove::schemas {",
+    "namespace foxglove::messages {",
     structDefs.join("\n\n"),
 
     "#ifndef __wasm32__",
     uniquePtr.join("\n"),
     channelClasses.join("\n\n"),
     "#endif",
-    "} // namespace foxglove::schemas",
+    "} // namespace foxglove::messages",
   ].filter(Boolean);
 
   return outputSections.join("\n\n") + "\n";
@@ -300,6 +312,9 @@ function cppToC(schema: FoxgloveMessageSchema, copyTypes: Set<string>): string[]
     const dstName = srcName;
     if (field.array != undefined) {
       if (typeof field.array === "number") {
+        if (field.type.type === "primitive" && field.type.name === "string") {
+          return `for (size_t i = 0; i < src.${srcName}.size(); i++) {\n      dest.${dstName}[i] = {src.${srcName}[i].data(), src.${srcName}[i].size()};\n    }`;
+        }
         return `::memcpy(dest.${dstName}, src.${srcName}.data(), src.${srcName}.size() * sizeof(*src.${srcName}.data()));`;
       } else {
         if (field.type.type === "nested") {
@@ -311,6 +326,9 @@ function cppToC(schema: FoxgloveMessageSchema, copyTypes: Set<string>): string[]
           }
         } else if (field.type.type === "primitive") {
           assert(field.type.name !== "bytes");
+          if (field.type.name === "string") {
+            return `dest.${dstName} = arena.map<foxglove_string>(src.${srcName}, [](foxglove_string& dest, const std::string& src, Arena&) {\n      dest = {src.data(), src.size()};\n    });\n    dest.${dstName}_count = src.${srcName}.size();`;
+          }
           return `dest.${dstName} = src.${srcName}.data();\n    dest.${dstName}_count = src.${srcName}.size();`;
         } else {
           throw Error(`unsupported array type: ${field.type.type}`);
@@ -324,6 +342,9 @@ function cppToC(schema: FoxgloveMessageSchema, copyTypes: Set<string>): string[]
         } else if (field.type.name === "bytes") {
           return `dest.${dstName} = reinterpret_cast<const unsigned char *>(src.${srcName}.data());\n    dest.${dstName}_len = src.${srcName}.size();`;
         }
+        if (field.optional) {
+          return `dest.${dstName} = src.${dstName} ? &*src.${dstName} : nullptr;`;
+        }
         return `dest.${dstName} = src.${srcName};`;
       case "enum":
         return `dest.${dstName} = static_cast<foxglove_${toSnakeCase(field.type.enum.name)}>(src.${srcName});`;
@@ -335,7 +356,7 @@ function cppToC(schema: FoxgloveMessageSchema, copyTypes: Set<string>): string[]
         } else if (copyTypes.has(field.type.schema.name)) {
           return `dest.${dstName} = src.${srcName} ? reinterpret_cast<const foxglove_${toSnakeCase(field.type.schema.name)}*>(&*src.${srcName}) : nullptr;`;
         } else {
-          return `dest.${dstName} = src.${srcName} ? arena.map_one<foxglove_${toSnakeCase(field.type.schema.name)}>(src.${srcName}.value(), ${toCamelCase(field.type.schema.name)}ToC) : nullptr;`;
+          return `dest.${dstName} = src.${srcName} ? arena.mapOne<foxglove_${toSnakeCase(field.type.schema.name)}>(src.${srcName}.value(), ${toCamelCase(field.type.schema.name)}ToC) : nullptr;`;
         }
     }
   });
@@ -397,7 +418,7 @@ export function generateCppSchemas(schemas: FoxgloveMessageSchema[]): string {
       `uint64_t ${schema.name}Channel::id() const noexcept {`,
       "    return foxglove_channel_get_id(impl_.get());",
       "}\n\n",
-      `bool ${schema.name}Channel::has_sinks() const noexcept {
+      `bool ${schema.name}Channel::hasSinks() const noexcept {
         return foxglove_channel_has_sinks(impl_.get());
       }
       `,
@@ -460,7 +481,7 @@ export function generateCppSchemas(schemas: FoxgloveMessageSchema[]): string {
 
   const includes = [
     "#include <foxglove/error.hpp>",
-    "#include <foxglove/schemas.hpp>",
+    "#include <foxglove/messages.hpp>",
     "#include <foxglove/arena.hpp>",
     "#include <foxglove/schema.hpp>",
     "#ifndef __wasm32__",
@@ -477,7 +498,7 @@ export function generateCppSchemas(schemas: FoxgloveMessageSchema[]): string {
 
     systemIncludes.join("\n"),
 
-    "namespace foxglove::schemas {",
+    "namespace foxglove::messages {",
     conversionFuncDecls.join("\n"),
     "#ifndef __wasm32__",
     channelUniquePtr.join("\n"),
@@ -488,7 +509,7 @@ export function generateCppSchemas(schemas: FoxgloveMessageSchema[]): string {
     encodeImpls.join("\n"),
 
     getSchemaImpls.join("\n"),
-    "} // namespace foxglove::schemas",
+    "} // namespace foxglove::messages",
   ];
 
   return outputSections.join("\n\n") + "\n";

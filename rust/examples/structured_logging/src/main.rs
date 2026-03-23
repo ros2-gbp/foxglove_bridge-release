@@ -1,5 +1,6 @@
 use bytes::Bytes;
-use foxglove::{schemas, Encode, LazyChannel, LazyRawChannel, McapWriteOptions, McapWriter};
+use chrono::{DateTime, Utc};
+use foxglove::{Encode, LazyChannel, LazyRawChannel, McapWriteOptions, McapWriter, messages};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -13,10 +14,11 @@ struct Apple {
 struct Banana {
     length: f64,
     ripeness: f64,
+    picked_at: Option<DateTime<Utc>>,
 }
 
-// This channel logs images using Foxglove's image schema
-static IMG_CHANNEL: LazyChannel<schemas::CompressedImage> = LazyChannel::new("/image");
+// This channel logs images using Foxglove's CompressedImage message type
+static IMG_CHANNEL: LazyChannel<messages::CompressedImage> = LazyChannel::new("/image");
 // This channel logs schemaless JSON
 static SCHEMALESS_CHANNEL: LazyRawChannel = LazyRawChannel::new("/schemaless", "json");
 // This channel logs JSON with a jsonschema
@@ -47,8 +49,8 @@ fn main() {
         .create_new_buffered_file("example.mcap")
         .expect("Failed to start mcap writer");
 
-    // Using the Foxglove CompressedImage schema
-    IMG_CHANNEL.log(&schemas::CompressedImage {
+    // Using the Foxglove CompressedImage message type
+    IMG_CHANNEL.log(&messages::CompressedImage {
         data: Bytes::from_static(IMG_DATA),
         format: "webp".to_string(),
         ..Default::default()
@@ -82,10 +84,11 @@ fn main() {
     });
 
     // Or if we just want to serialize a struct without caring about the encoding,
-    // we can use the foxglove_derive feature to serialize to binary protobuf automatically
+    // we can use the foxglove_derive feature to serialize to binary protobuf automatically.
     BANANA_CHANNEL.log(&Banana {
         length: 10.0,
         ripeness: 0.5,
+        picked_at: Some(Utc::now()),
     });
 
     writer.close().expect("Failed to flush mcap file");
