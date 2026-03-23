@@ -4,6 +4,12 @@ See [Foxglove Schemas documentation](https://docs.foxglove.dev/docs/visualizatio
 
 All schemas are generated from [schemas.ts](/internal/schemas.ts).
 
+## Optional fields
+
+Optional message fields may be omitted. When omitted, the consumer (e.g. a Foxglove panel) determines the behavior.
+
+If the IDL does not support optional fields (e.g. ROS) you must specify a value for the field.
+
 ## Contents
 
 - [enum LineType](#enum-linetype)
@@ -26,6 +32,8 @@ All schemas are generated from [schemas.ts](/internal/schemas.ts).
 - [GeoJSON](#geojson)
 - [Grid](#grid)
 - [ImageAnnotations](#imageannotations)
+- [JointState](#jointstate)
+- [JointStates](#jointstates)
 - [KeyValuePair](#keyvaluepair)
 - [LaserScan](#laserscan)
 - [LinePrimitive](#lineprimitive)
@@ -343,6 +351,8 @@ K = [ 0 fy cy]
     [ 0  0  1]
 ```
 
+**Uncalibrated cameras:** Following ROS conventions for [CameraInfo](https://docs.ros.org/en/noetic/api/sensor_msgs/html/msg/CameraInfo.html), Foxglove also treats K[0] == 0.0 as indicating an uncalibrated camera, and calibration data will be ignored.
+
 
 </td>
 </tr>
@@ -487,6 +497,19 @@ Fill color
 <td>
 
 Outline color
+
+</td>
+</tr>
+<tr>
+<td><code>metadata</code> (optional)</td>
+<td>
+
+[KeyValuePair](#keyvaluepair)[]
+
+</td>
+<td>
+
+Additional user-provided metadata associated with this annotation. Keys must be unique.
 
 </td>
 </tr>
@@ -882,7 +905,7 @@ The number of nanoseconds in the positive direction
 
 ## FrameTransform
 
-A transform between two reference frames in 3D space. The transform defines the position and orientation of a child frame within a parent frame. Translation moves the origin of the child frame relative to the parent origin. The rotation changes the orientiation of the child frame around its origin.
+A transform between two reference frames in 3D space. The transform defines the position and orientation of a child frame within a parent frame. Translation moves the origin of the child frame relative to the parent origin. The rotation changes the orientation of the child frame around its origin.
 
 Examples:
 
@@ -1194,6 +1217,19 @@ Array of annotations for a 2D image
     <th>description</th>
   </tr>
 <tr>
+<td><code>timestamp</code> (optional)</td>
+<td>
+
+[Timestamp](#timestamp)
+
+</td>
+<td>
+
+Timestamp of the image annotations. When set, individual annotation timestamps will be ignored.
+
+</td>
+</tr>
+<tr>
 <td><code>circles</code></td>
 <td>
 
@@ -1229,6 +1265,134 @@ Points annotations
 <td>
 
 Text annotations
+
+</td>
+</tr>
+<tr>
+<td><code>metadata</code> (optional)</td>
+<td>
+
+[KeyValuePair](#keyvaluepair)[]
+
+</td>
+<td>
+
+Additional user-provided metadata associated with the image annotations. Keys must be unique within this object. Per-annotation metadata takes precedence over these values.
+
+</td>
+</tr>
+</table>
+
+## JointState
+
+The state of a single joint (revolute or prismatic).
+
+<table>
+  <tr>
+    <th>field</th>
+    <th>type</th>
+    <th>description</th>
+  </tr>
+<tr>
+<td><code>name</code></td>
+<td>
+
+string
+
+</td>
+<td>
+
+Joint name
+
+</td>
+</tr>
+<tr>
+<td><code>position</code> (optional)</td>
+<td>
+
+float64
+
+</td>
+<td>
+
+Joint position. Radians for revolute joints, meters for prismatic joints.
+
+</td>
+</tr>
+<tr>
+<td><code>velocity</code> (optional)</td>
+<td>
+
+float64
+
+</td>
+<td>
+
+Joint velocity. Rad/s for revolute joints, m/s for prismatic joints.
+
+</td>
+</tr>
+<tr>
+<td><code>acceleration</code> (optional)</td>
+<td>
+
+float64
+
+</td>
+<td>
+
+Joint acceleration. Rad/s² for revolute joints, m/s² for prismatic joints.
+
+</td>
+</tr>
+<tr>
+<td><code>effort</code> (optional)</td>
+<td>
+
+float64
+
+</td>
+<td>
+
+Joint effort (force or torque). Nm for revolute joints, N for prismatic joints.
+
+</td>
+</tr>
+</table>
+
+## JointStates
+
+The state of a set of joints at a given time.
+
+<table>
+  <tr>
+    <th>field</th>
+    <th>type</th>
+    <th>description</th>
+  </tr>
+<tr>
+<td><code>timestamp</code></td>
+<td>
+
+[Timestamp](#timestamp)
+
+</td>
+<td>
+
+Timestamp of the joint states
+
+</td>
+</tr>
+<tr>
+<td><code>joints</code></td>
+<td>
+
+[JointState](#jointstate)[]
+
+</td>
+<td>
+
+Joint states
 
 </td>
 </tr>
@@ -1595,7 +1759,7 @@ If `position_covariance` is available, `position_covariance_type` must be set to
 </td>
 </tr>
 <tr>
-<td><code>color</code></td>
+<td><code>color</code> (optional)</td>
 <td>
 
 [Color](#color)
@@ -1604,6 +1768,19 @@ If `position_covariance` is available, `position_covariance_type` must be set to
 <td>
 
 Color used to visualize the location
+
+</td>
+</tr>
+<tr>
+<td><code>metadata</code> (optional)</td>
+<td>
+
+[KeyValuePair](#keyvaluepair)[]
+
+</td>
+<td>
+
+Additional user-provided metadata associated with the location fix. Keys must be unique.
 
 </td>
 </tr>
@@ -2207,6 +2384,19 @@ float64
 <td>
 
 Stroke thickness in pixels
+
+</td>
+</tr>
+<tr>
+<td><code>metadata</code> (optional)</td>
+<td>
+
+[KeyValuePair](#keyvaluepair)[]
+
+</td>
+<td>
+
+Additional user-provided metadata associated with this annotation. Keys must be unique.
 
 </td>
 </tr>
@@ -3069,6 +3259,19 @@ Text color
 <td>
 
 Background fill color
+
+</td>
+</tr>
+<tr>
+<td><code>metadata</code> (optional)</td>
+<td>
+
+[KeyValuePair](#keyvaluepair)[]
+
+</td>
+<td>
+
+Additional user-provided metadata associated with this annotation. Keys must be unique.
 
 </td>
 </tr>
