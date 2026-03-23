@@ -18,8 +18,6 @@ mod channel;
 #[cfg(not(target_family = "wasm"))]
 mod channel_descriptor;
 #[cfg(not(target_family = "wasm"))]
-mod cloud_sink;
-#[cfg(not(target_family = "wasm"))]
 mod connection_graph;
 #[cfg(not(target_family = "wasm"))]
 mod fetch_asset;
@@ -38,8 +36,6 @@ mod service;
 #[cfg(not(target_family = "wasm"))]
 mod sink_channel_filter;
 
-#[cfg(not(target_family = "wasm"))]
-pub use cloud_sink::*;
 #[cfg(not(target_family = "wasm"))]
 pub use server::*;
 
@@ -363,7 +359,7 @@ pub struct FoxgloveTimestamp {
     pub nsec: u32,
 }
 
-impl From<FoxgloveTimestamp> for foxglove::schemas::Timestamp {
+impl From<FoxgloveTimestamp> for foxglove::messages::Timestamp {
     fn from(other: FoxgloveTimestamp) -> Self {
         Self::new(other.sec, other.nsec)
     }
@@ -381,7 +377,7 @@ pub struct FoxgloveDuration {
     nsec: u32,
 }
 
-impl From<FoxgloveDuration> for foxglove::schemas::Duration {
+impl From<FoxgloveDuration> for foxglove::messages::Duration {
     fn from(other: FoxgloveDuration) -> Self {
         Self::new(other.sec, other.nsec)
     }
