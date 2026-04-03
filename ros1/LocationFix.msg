@@ -36,5 +36,14 @@ uint8 KNOWN=3
 # If `position_covariance` is available, `position_covariance_type` must be set to indicate the type of covariance.
 uint8 position_covariance_type
 
+# Heading (yaw angle), in radians, measured clockwise from north (NaN indicates this value is not set)
+float64 heading
+
+# Velocity in local East-North-Up (ENU) frame in m/s
+foxglove_msgs/Velocity3 velocity
+
 # Color used to visualize the location
 foxglove_msgs/Color color
+
+# Additional user-provided metadata associated with the location fix. Keys must be unique.
+foxglove_msgs/KeyValuePair[] metadata
