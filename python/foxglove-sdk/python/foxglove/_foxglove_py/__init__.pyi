@@ -21,8 +21,12 @@ class McapWritable(Protocol):
         """Flush any buffered data."""
         ...
 
-from .cloud import CloudSink
 from .mcap import MCAPWriteOptions, MCAPWriter
+from .remote_access import Capability as RemoteAccessCapability
+from .remote_access import (
+    RemoteAccessConnectionStatus,
+    RemoteAccessGateway,
+)
 from .websocket import Capability, Service, WebSocketServer
 
 class BaseChannel:
@@ -154,6 +158,25 @@ class ChannelDescriptor:
 
 SinkChannelFilter = Callable[[ChannelDescriptor], bool]
 
+def start_gateway(
+    *,
+    name: str | None = None,
+    device_token: str | None = None,
+    capabilities: list[RemoteAccessCapability] | None = None,
+    listener: Any = None,
+    supported_encodings: list[str] | None = None,
+    services: list[Service] | None = None,
+    context: Context | None = None,
+    channel_filter: SinkChannelFilter | None = None,
+    message_backlog_size: int | None = None,
+    foxglove_api_url: str | None = None,
+    foxglove_api_timeout: float | None = None,
+) -> RemoteAccessGateway:
+    """
+    Start a remote access gateway for live visualization and teleop in Foxglove.
+    """
+    ...
+
 def start_server(
     *,
     name: str | None = None,
@@ -171,18 +194,6 @@ def start_server(
 ) -> WebSocketServer:
     """
     Start a websocket server for live visualization.
-    """
-    ...
-
-def start_cloud_sink(
-    *,
-    listener: Any = None,
-    supported_encodings: list[str] | None = None,
-    context: Context | None = None,
-    session_id: str | None = None,
-) -> CloudSink:
-    """
-    Connect to Foxglove Agent for remote visualization and teleop.
     """
     ...
 

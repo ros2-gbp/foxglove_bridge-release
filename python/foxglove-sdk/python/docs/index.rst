@@ -57,15 +57,18 @@ channel remains attached to the context until it is either explicitly closed wit
 `Channel.close`, or the context is dropped. Attempting to log a message on a closed channel
 will elicit a throttled warning.
 
-Schemas
-^^^^^^^
+Message Types
+^^^^^^^^^^^^^
 
-The SDK provides classes for well-known schemas. These can be used in conjunction with associated
+The SDK provides classes for well-known message types. These can be used in conjunction with associated
 channel classes for type-safe logging, which ensures at compile time that messages logged to a
 channel all share a common schema. For example, you may create a :py:class:`.channels.SceneUpdateChannel` on
-which you will log :py:class:`.schemas.SceneUpdate` messages. Note that the schema classes
+which you will log :py:class:`.messages.SceneUpdate` messages. Note that the message classes
 are currently immutable and do not expose getters and setters for their fields. This is a limitation
 we plan to address in the future.
+
+.. deprecated::
+   The ``foxglove.schemas`` module is deprecated. Use :py:mod:`foxglove.messages` instead.
 
 You can also log messages with arbitrary schemas and provide your own encoding, by instantiating a
 :py:class:`.Channel` class.
@@ -90,9 +93,28 @@ listens on ``127.0.0.1:8765``. Each client that connects to the websocket server
 sink. The sink is dynamically added to the :py:class:`.Context` associated with the server when the client
 connects, and removed from the context when the client disconnects.
 
+Notebook integration
+^^^^^^^^^^^^^^^^^^^^
+
+See :doc:`../notebook/index` for details on using Foxglove with Python/Jupyter notebooks.
+
+Playground
+^^^^^^^^^^
+
+The `Foxglove SDK Playground <https://playground.foxglove.dev/>`__ allows you to run Python code
+using the Foxglove SDK, and visualize the resulting data in Foxglove. Inside a playground, the
+following APIs are available:
+
+.. py:function:: playground.set_layout(layout: Layout, /) -> None
+
+   Update the layout used in the playground.
+
+Table of contents
+^^^^^^^^^^^^^^^^^
 
 .. toctree::
    :maxdepth: 3
 
    examples
    api/index
+   notebook/index
