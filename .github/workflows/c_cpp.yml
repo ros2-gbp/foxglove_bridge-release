@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["**"]
-  pull_request: {}
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_call:
     inputs:
       sdk-version:
@@ -16,20 +17,43 @@ on:
         value: ${{ jobs.build.outputs.artifact_pattern }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      build: ${{ github.event_name != 'pull_request' || steps.paths.outputs.c-cpp == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:c-cpp') }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        if: github.event_name == 'pull_request'
+        id: paths
+        with:
+          filters: |
+            c-cpp:
+              - 'c/**'
+              - 'cpp/**'
+              - '.github/workflows/c_cpp.yml'
+
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - run: |
-          sudo apt install -y --no-install-recommends clang-format-19
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-format-19 clang-tidy-19 \
+            libwebsockets-dev nlohmann-json3-dev
           echo "/usr/lib/llvm-19/bin" >> $GITHUB_PATH
       - run: clang-format --version
+      - run: clang-tidy --version
       - run: make lint
         working-directory: cpp
       - run: make CLANG_TIDY=true build
         working-directory: cpp
 
   build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -185,6 +209,15 @@ jobs:
         run: make test
         working-directory: cpp
 
+      - name: Run remote data loader backend conformance tests
+        if: ${{ !fromJson(matrix.cross) }}
+        env:
+          REMOTE_DATA_LOADER_BACKEND_CMD: ${{ runner.os == 'Windows' && 'cpp/build/RelWithDebInfo/example_remote_data_loader_backend.exe' || 'cpp/build/example_remote_data_loader_backend' }}
+          REMOTE_DATA_LOADER_BACKEND_URL: "http://127.0.0.1:8081/v1/manifest?flightId=TEST123&startTime=2024-01-01T00:00:00Z&endTime=2024-01-01T00:00:05Z"
+          REMOTE_DATA_LOADER_BACKEND_EXPECTED_STREAMED_SOURCE_COUNT: "1"
+          REMOTE_DATA_LOADER_BACKEND_EXPECTED_STATIC_FILE_SOURCE_COUNT: "0"
+        run: cargo run -p remote_data_loader_backend_conformance
+
       - name: Build & test (Debug mode)
         if: ${{ fromJson(matrix.test_debug) }}
         env:
@@ -221,7 +254,7 @@ jobs:
             foxglove/
 
       - name: Upload static & shared library to artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         if: ${{ !(matrix.skip_upload || false) }}
         with:
           name: foxglove-${{inputs.sdk-version || github.sha}}-cpp-${{ matrix.target }}.zip
@@ -229,6 +262,8 @@ jobs:
           if-no-files-found: error
 
   test-asan-ubsan:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     env:
       CC: clang
@@ -239,6 +274,23 @@ jobs:
         with:
           toolchain: nightly
           components: rust-src
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebsockets-dev nlohmann-json3-dev
 
       - run: make SANITIZE=address,undefined test
         working-directory: cpp
+
+  # Gate job for branch protection. Always posts a status so that the required
+  # check passes even when the other jobs are skipped. Configure your required
+  # status check to reference this job ("C/C++ / c-cpp-status") instead of the
+  # individual matrix jobs.
+  c-cpp-status:
+    name: c-cpp-status
+    needs: [changes, lint, build, test-asan-ubsan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
