@@ -1,4 +1,4 @@
-From dc8d9b1867c804ea6ec9b536719c1efbd638d154 Mon Sep 17 00:00:00 2001
+From 32c64f4ec66a50cca5b43aa911f3d10f0521902b Mon Sep 17 00:00:00 2001
 From: Eric Lujan <eric@foxglove.dev>
 Date: Thu, 25 Sep 2025 12:18:20 -0700
 Subject: [PATCH] Override FetchContent flag
@@ -8,7 +8,7 @@ Subject: [PATCH] Override FetchContent flag
  1 file changed, 1 insertion(+)
 
 diff --git a/debian/rules.em b/debian/rules.em
-index a856369..b36b206 100755
+index a856369d..b36b206d 100755
 --- a/debian/rules.em
 +++ b/debian/rules.em
 @@ -35,6 +35,7 @@ override_dh_auto_configure:
