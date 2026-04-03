@@ -11,6 +11,7 @@ from foxglove._foxglove_py.channels import (
     CircleAnnotationChannel,
     ColorChannel,
     CompressedImageChannel,
+    CompressedPointCloudChannel,
     CompressedVideoChannel,
     CubePrimitiveChannel,
     CylinderPrimitiveChannel,
@@ -49,6 +50,7 @@ from foxglove._foxglove_py.channels import (
     TriangleListPrimitiveChannel,
     Vector2Channel,
     Vector3Channel,
+    Velocity3Channel,
     VoxelGridChannel,
 )
 
@@ -58,6 +60,7 @@ __all__ = [
     "CircleAnnotationChannel",
     "ColorChannel",
     "CompressedImageChannel",
+    "CompressedPointCloudChannel",
     "CompressedVideoChannel",
     "CubePrimitiveChannel",
     "CylinderPrimitiveChannel",
@@ -96,5 +99,6 @@ __all__ = [
     "TriangleListPrimitiveChannel",
     "Vector2Channel",
     "Vector3Channel",
+    "Velocity3Channel",
     "VoxelGridChannel",
 ]

@@ -160,6 +160,32 @@ const Vector3: FoxgloveMessageSchema = {
   ],
 };
 
+const Velocity3: FoxgloveMessageSchema = {
+  type: "message",
+  name: "Velocity3",
+  description: "A velocity vector in 3D space",
+  fields: [
+    {
+      name: "x",
+      type: { type: "primitive", name: "float64" },
+      description: "x component",
+      defaultValue: 0,
+    },
+    {
+      name: "y",
+      type: { type: "primitive", name: "float64" },
+      description: "y component",
+      defaultValue: 0,
+    },
+    {
+      name: "z",
+      type: { type: "primitive", name: "float64" },
+      description: "z component",
+      defaultValue: 0,
+    },
+  ],
+};
+
 const Point2: FoxgloveMessageSchema = {
   type: "message",
   name: "Point2",
@@ -1005,6 +1031,15 @@ For each \`encoding\` value, the \`data\` field contains image pixel data serial
   - Pixel channel values are represented as unsigned 8-bit integers.
   - U and V values are shared between horizontal pairs of pixels. Each pair of output pixels is encoded as [Y1, U, Y2, V].
   - \`step\` must be greater than or equal to \`width\` * 2.
+- \`nv12\`:
+  - Pixel colors are decomposed into [Y'UV](https://en.wikipedia.org/wiki/Y%E2%80%B2UV) channels using 4:2:0 chroma subsampling. The data is stored in [NV12](https://www.kernel.org/doc/html/v4.10/media/uapi/v4l/pixfmt-nv12.html) semi-planar layout with two contiguous planes: a Y (luma) plane followed by an interleaved UV (chroma) plane.
+  - All channel values are represented as unsigned 8-bit integers.
+  - Both planes use \`step\` as their row stride.
+  - The Y plane contains one luma value per pixel (\`step\` * \`height\` bytes).
+  - The UV plane contains interleaved U, V chroma pairs, subsampled by a factor of 2 in both dimensions (\`width\`/2 pairs per row, \`height\`/2 rows, \`step\` * \`height\`/2 bytes). Each U, V pair is shared by a 2x2 block of pixels.
+  - \`width\` and \`height\` must be even.
+  - \`step\` must be greater than or equal to \`width\`.
+  - Total \`data\` length is \`step\` * \`height\` * 3/2 bytes.
 - \`rgb8\`:
   - Pixel colors are decomposed into Red, Green, and Blue channels.
   - Pixel channel values are represented as unsigned 8-bit integers.
@@ -1032,7 +1067,7 @@ For each \`encoding\` value, the \`data\` field contains image pixel data serial
   - Pixel colors are decomposed into Red, Blue and Green channels.
   - Pixel channel values are represented as unsigned 8-bit integers, and serialized in a 2x2 bayer filter pattern.
   - The order of the four letters after \`bayer_\` determine the layout, so for \`bayer_wxyz8\` the pattern is:
-  \`\`\`plaintext
+  \`\`\`text
   w | x
   - + -
   y | z
@@ -1197,6 +1232,42 @@ const PackedElementField: FoxgloveMessageSchema = {
       name: "type",
       type: { type: "enum", enum: NumericType },
       description: "Type of data in the field. Integers are stored using little-endian byte order.",
+    },
+  ],
+};
+
+const CompressedPointCloud: FoxgloveMessageSchema = {
+  type: "message",
+  name: "CompressedPointCloud",
+  description:
+    "A compressed point cloud. A decoder for `format` must decompress `data`, using metadata stored in the compressed payload to recover point positions and any additional per-point attributes. The decoded point cloud must include at least 2 coordinate fields from `x`, `y`, and `z`; `red`, `green`, `blue`, and `alpha` are optional for customizing each point's color.",
+  fields: [
+    {
+      name: "timestamp",
+      type: { type: "nested", schema: Timestamp },
+      description: "Timestamp of point cloud",
+    },
+    {
+      name: "frame_id",
+      type: { type: "primitive", name: "string" },
+      description: "Frame of reference",
+    },
+    {
+      name: "pose",
+      type: { type: "nested", schema: Pose },
+      description: "The origin of the point cloud relative to the frame of reference",
+    },
+    {
+      name: "data",
+      type: { type: "primitive", name: "bytes" },
+      description:
+        "Compressed point cloud data for exactly one point cloud, including any format-specific metadata needed to describe the decoded point attributes.",
+    },
+    {
+      name: "format",
+      type: { type: "primitive", name: "string" },
+      description:
+        "Point cloud compression format.\n\nSupported values: `draco` ([Google Draco](https://google.github.io/draco/)).",
     },
   ],
 };
@@ -1615,6 +1686,22 @@ const LocationFix: FoxgloveMessageSchema = {
       protobufFieldNumber: 5,
     },
     {
+      name: "heading",
+      type: { type: "primitive", name: "float64" },
+      description: "Heading (yaw angle), in radians, measured clockwise from north",
+      protobufFieldNumber: 10,
+      flatbuffersFieldNumber: 9,
+      optional: true,
+    },
+    {
+      name: "velocity",
+      type: { type: "nested", schema: Velocity3 },
+      description: "Velocity in local East-North-Up (ENU) frame in m/s",
+      protobufFieldNumber: 11,
+      flatbuffersFieldNumber: 10,
+      optional: true,
+    },
+    {
       name: "color",
       type: { type: "nested", schema: Color },
       description: "Color used to visualize the location",
@@ -1852,6 +1939,7 @@ export const foxgloveMessageSchemas = {
   CircleAnnotation,
   Color,
   CompressedImage,
+  CompressedPointCloud,
   CompressedVideo,
   CylinderPrimitive,
   CubePrimitive,
@@ -1893,6 +1981,7 @@ export const foxgloveMessageSchemas = {
   TriangleListPrimitive,
   Vector2,
   Vector3,
+  Velocity3,
 };
 
 export const foxgloveEnumSchemas = {

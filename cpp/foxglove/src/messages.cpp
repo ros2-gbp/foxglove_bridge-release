@@ -22,6 +22,9 @@ void circleAnnotationToC(
   foxglove_circle_annotation& dest, const CircleAnnotation& src, Arena& arena
 );
 void compressedImageToC(foxglove_compressed_image& dest, const CompressedImage& src, Arena& arena);
+void compressedPointCloudToC(
+  foxglove_compressed_point_cloud& dest, const CompressedPointCloud& src, Arena& arena
+);
 void compressedVideoToC(foxglove_compressed_video& dest, const CompressedVideo& src, Arena& arena);
 void cubePrimitiveToC(foxglove_cube_primitive& dest, const CubePrimitive& src, Arena& arena);
 void cylinderPrimitiveToC(
@@ -251,6 +254,42 @@ uint64_t CompressedImageChannel::id() const noexcept {
 }
 
 bool CompressedImageChannel::hasSinks() const noexcept {
+  return foxglove_channel_has_sinks(impl_.get());
+}
+
+FoxgloveResult<CompressedPointCloudChannel> CompressedPointCloudChannel::create(
+  const std::string_view& topic, const Context& context
+) {
+  const foxglove_channel* channel = nullptr;
+  foxglove_error error = foxglove_channel_create_compressed_point_cloud(
+    {topic.data(), topic.size()}, context.getInner(), &channel
+  );
+  if (error != foxglove_error::FOXGLOVE_ERROR_OK || channel == nullptr) {
+    return tl::unexpected(FoxgloveError(error));
+  }
+  return CompressedPointCloudChannel(ChannelUniquePtr(channel));
+}
+
+FoxgloveError CompressedPointCloudChannel::log(
+  const CompressedPointCloud& msg, std::optional<uint64_t> log_time, std::optional<uint64_t> sink_id
+) noexcept {
+  Arena arena;
+  foxglove_compressed_point_cloud c_msg;
+  compressedPointCloudToC(c_msg, msg, arena);
+  return FoxgloveError(foxglove_channel_log_compressed_point_cloud(
+    impl_.get(), &c_msg, log_time ? &*log_time : nullptr, sink_id ? *sink_id : 0
+  ));
+}
+
+void CompressedPointCloudChannel::close() noexcept {
+  foxglove_channel_close(impl_.get());
+}
+
+uint64_t CompressedPointCloudChannel::id() const noexcept {
+  return foxglove_channel_get_id(impl_.get());
+}
+
+bool CompressedPointCloudChannel::hasSinks() const noexcept {
   return foxglove_channel_has_sinks(impl_.get());
 }
 
@@ -1609,6 +1648,41 @@ bool Vector3Channel::hasSinks() const noexcept {
   return foxglove_channel_has_sinks(impl_.get());
 }
 
+FoxgloveResult<Velocity3Channel> Velocity3Channel::create(
+  const std::string_view& topic, const Context& context
+) {
+  const foxglove_channel* channel = nullptr;
+  foxglove_error error =
+    foxglove_channel_create_velocity3({topic.data(), topic.size()}, context.getInner(), &channel);
+  if (error != foxglove_error::FOXGLOVE_ERROR_OK || channel == nullptr) {
+    return tl::unexpected(FoxgloveError(error));
+  }
+  return Velocity3Channel(ChannelUniquePtr(channel));
+}
+
+FoxgloveError Velocity3Channel::log(
+  const Velocity3& msg, std::optional<uint64_t> log_time, std::optional<uint64_t> sink_id
+) noexcept {
+  return FoxgloveError(foxglove_channel_log_velocity3(
+    impl_.get(),
+    reinterpret_cast<const foxglove_velocity3*>(&msg),
+    log_time ? &*log_time : nullptr,
+    sink_id ? *sink_id : 0
+  ));
+}
+
+void Velocity3Channel::close() noexcept {
+  foxglove_channel_close(impl_.get());
+}
+
+uint64_t Velocity3Channel::id() const noexcept {
+  return foxglove_channel_get_id(impl_.get());
+}
+
+bool Velocity3Channel::hasSinks() const noexcept {
+  return foxglove_channel_has_sinks(impl_.get());
+}
+
 FoxgloveResult<VoxelGridChannel> VoxelGridChannel::create(
   const std::string_view& topic, const Context& context
 ) {
@@ -1695,6 +1769,19 @@ void compressedImageToC(
   dest.timestamp =
     src.timestamp ? reinterpret_cast<const foxglove_timestamp*>(&*src.timestamp) : nullptr;
   dest.frame_id = {src.frame_id.data(), src.frame_id.size()};
+  dest.data = reinterpret_cast<const unsigned char*>(src.data.data());
+  dest.data_len = src.data.size();
+  dest.format = {src.format.data(), src.format.size()};
+}
+
+void compressedPointCloudToC(
+  foxglove_compressed_point_cloud& dest, const CompressedPointCloud& src,
+  [[maybe_unused]] Arena& arena
+) {
+  dest.timestamp =
+    src.timestamp ? reinterpret_cast<const foxglove_timestamp*>(&*src.timestamp) : nullptr;
+  dest.frame_id = {src.frame_id.data(), src.frame_id.size()};
+  dest.pose = src.pose ? arena.mapOne<foxglove_pose>(src.pose.value(), poseToC) : nullptr;
   dest.data = reinterpret_cast<const unsigned char*>(src.data.data());
   dest.data_len = src.data.size();
   dest.format = {src.format.data(), src.format.size()};
@@ -1855,6 +1942,9 @@ void locationFixToC(
   );
   dest.position_covariance_type =
     static_cast<foxglove_position_covariance_type>(src.position_covariance_type);
+  dest.heading = src.heading ? &*src.heading : nullptr;
+  dest.velocity =
+    src.velocity ? reinterpret_cast<const foxglove_velocity3*>(&*src.velocity) : nullptr;
   dest.color = src.color ? reinterpret_cast<const foxglove_color*>(&*src.color) : nullptr;
   dest.metadata = arena.map<foxglove_key_value_pair>(src.metadata, keyValuePairToC);
   dest.metadata_count = src.metadata.size();
@@ -2140,6 +2230,13 @@ FoxgloveError CompressedImage::encode(uint8_t* ptr, size_t len, size_t* encoded_
   return FoxgloveError(foxglove_compressed_image_encode(&c_msg, ptr, len, encoded_len));
 }
 
+FoxgloveError CompressedPointCloud::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
+  Arena arena;
+  foxglove_compressed_point_cloud c_msg;
+  compressedPointCloudToC(c_msg, *this, arena);
+  return FoxgloveError(foxglove_compressed_point_cloud_encode(&c_msg, ptr, len, encoded_len));
+}
+
 FoxgloveError CompressedVideo::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
   Arena arena;
   foxglove_compressed_video c_msg;
@@ -2401,6 +2498,12 @@ FoxgloveError Vector3::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
   );
 }
 
+FoxgloveError Velocity3::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
+  return FoxgloveError(foxglove_velocity3_encode(
+    reinterpret_cast<const foxglove_velocity3*>(this), ptr, len, encoded_len
+  ));
+}
+
 FoxgloveError VoxelGrid::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
   Arena arena;
   foxglove_voxel_grid c_msg;
@@ -2450,6 +2553,16 @@ Schema Color::schema() {
 
 Schema CompressedImage::schema() {
   struct foxglove_schema c_schema = foxglove_compressed_image_schema();
+  Schema result;
+  result.name = std::string(c_schema.name.data, c_schema.name.len);
+  result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
+  result.data = reinterpret_cast<const std::byte*>(c_schema.data);
+  result.data_len = c_schema.data_len;
+  return result;
+}
+
+Schema CompressedPointCloud::schema() {
+  struct foxglove_schema c_schema = foxglove_compressed_point_cloud_schema();
   Schema result;
   result.name = std::string(c_schema.name.data, c_schema.name.len);
   result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
@@ -2830,6 +2943,16 @@ Schema Vector2::schema() {
 
 Schema Vector3::schema() {
   struct foxglove_schema c_schema = foxglove_vector3_schema();
+  Schema result;
+  result.name = std::string(c_schema.name.data, c_schema.name.len);
+  result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
+  result.data = reinterpret_cast<const std::byte*>(c_schema.data);
+  result.data_len = c_schema.data_len;
+  return result;
+}
+
+Schema Velocity3::schema() {
+  struct foxglove_schema c_schema = foxglove_velocity3_schema();
   Schema result;
   result.name = std::string(c_schema.name.data, c_schema.name.len);
   result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
