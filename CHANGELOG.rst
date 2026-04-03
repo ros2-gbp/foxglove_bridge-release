@@ -2,6 +2,14 @@
 Changelog for package foxglove_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.2.6 (2026-04-02)
+------------------
+* Fix ROS rolling build for rclcpp 31.0.0
+
+3.2.5 (2026-03-22)
+------------------
+* Work around broken rosx_introspection transitive dependencies
+
 3.2.4 (2026-01-22)
 ------------------
 * Add client count topic (`#692 <https://github.com/foxglove/foxglove-sdk/pull/692>`_)
