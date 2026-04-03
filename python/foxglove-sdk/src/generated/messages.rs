@@ -478,6 +478,76 @@ impl From<CompressedImage> for foxglove::messages::CompressedImage {
     }
 }
 
+/// A compressed point cloud. A decoder for `format` must decompress `data`, using metadata stored in the compressed payload to recover point positions and any additional per-point attributes. The decoded point cloud must include at least 2 coordinate fields from `x`, `y`, and `z`; `red`, `green`, `blue`, and `alpha` are optional for customizing each point's color.
+///
+/// :param timestamp: Timestamp of point cloud
+/// :param frame_id: Frame of reference
+/// :param pose: The origin of the point cloud relative to the frame of reference
+/// :param data: Compressed point cloud data for exactly one point cloud, including any format-specific metadata needed to describe the decoded point attributes.
+/// :param format: Point cloud compression format.
+///     
+///     Supported values: `draco` (`Google Draco <https://google.github.io/draco/>`__).
+///
+/// See https://docs.foxglove.dev/docs/visualization/message-schemas/compressed-point-cloud
+#[pyclass(module = "foxglove.messages")]
+#[derive(Clone)]
+pub(crate) struct CompressedPointCloud(pub(crate) foxglove::messages::CompressedPointCloud);
+#[pymethods]
+impl CompressedPointCloud {
+    #[new]
+    #[pyo3(signature = (*, timestamp=None, frame_id="", pose=None, data=None, format="") )]
+    fn new(
+        timestamp: Option<Timestamp>,
+        frame_id: &str,
+        pose: Option<Pose>,
+        data: Option<Bound<'_, PyBytes>>,
+        format: &str,
+    ) -> Self {
+        Self(foxglove::messages::CompressedPointCloud {
+            timestamp: timestamp.map(Into::into),
+            frame_id: frame_id.to_string(),
+            pose: pose.map(Into::into),
+            data: data
+                .map(|x| Bytes::copy_from_slice(x.as_bytes()))
+                .unwrap_or_default(),
+            format: format.to_string(),
+        })
+    }
+    fn __repr__(&self) -> String {
+        format!(
+            "CompressedPointCloud(timestamp={:?}, frame_id={:?}, pose={:?}, data={:?}, format={:?})",
+            self.0.timestamp, self.0.frame_id, self.0.pose, self.0.data, self.0.format,
+        )
+    }
+    /// Returns the CompressedPointCloud schema.
+    #[staticmethod]
+    fn get_schema() -> PySchema {
+        foxglove::messages::CompressedPointCloud::get_schema()
+            .unwrap()
+            .into()
+    }
+    /// Encodes the CompressedPointCloud as protobuf.
+    fn encode<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
+        PyBytes::new_with(
+            py,
+            self.0.encoded_len().expect("foxglove schemas provide len"),
+            |mut b: &mut [u8]| {
+                self.0
+                    .encode(&mut b)
+                    .expect("encoding len was provided above");
+                Ok(())
+            },
+        )
+        .expect("failed to allocate buffer for encoded message")
+    }
+}
+
+impl From<CompressedPointCloud> for foxglove::messages::CompressedPointCloud {
+    fn from(value: CompressedPointCloud) -> Self {
+        value.0
+    }
+}
+
 /// A single frame of a compressed video bitstream
 ///
 /// :param timestamp: Timestamp of video frame
@@ -1538,6 +1608,8 @@ impl From<LinePrimitive> for foxglove::messages::LinePrimitive {
 /// :param altitude: Altitude in meters
 /// :param position_covariance: Position covariance (m^2) defined relative to a tangential plane through the reported position. The components are East, North, and Up (ENU), in row-major order.
 /// :param position_covariance_type: If `position_covariance` is available, `position_covariance_type` must be set to indicate the type of covariance.
+/// :param heading: Heading (yaw angle), in radians, measured clockwise from north
+/// :param velocity: Velocity in local East-North-Up (ENU) frame in m/s
 /// :param color: Color used to visualize the location
 /// :param metadata: Additional user-provided metadata associated with the location fix. Keys must be unique.
 ///
@@ -1548,7 +1620,7 @@ pub(crate) struct LocationFix(pub(crate) foxglove::messages::LocationFix);
 #[pymethods]
 impl LocationFix {
     #[new]
-    #[pyo3(signature = (*, timestamp=None, frame_id="", latitude=0.0, longitude=0.0, altitude=0.0, position_covariance=None, position_covariance_type=LocationFixPositionCovarianceType::Unknown, color=None, metadata=None) )]
+    #[pyo3(signature = (*, timestamp=None, frame_id="", latitude=0.0, longitude=0.0, altitude=0.0, position_covariance=None, position_covariance_type=LocationFixPositionCovarianceType::Unknown, heading=None, velocity=None, color=None, metadata=None) )]
     fn new(
         timestamp: Option<Timestamp>,
         frame_id: &str,
@@ -1557,6 +1629,8 @@ impl LocationFix {
         altitude: f64,
         position_covariance: Option<Vec<f64>>,
         position_covariance_type: LocationFixPositionCovarianceType,
+        heading: Option<f64>,
+        velocity: Option<Velocity3>,
         color: Option<Color>,
         metadata: Option<Vec<KeyValuePair>>,
     ) -> Self {
@@ -1568,6 +1642,8 @@ impl LocationFix {
             altitude,
             position_covariance: position_covariance.unwrap_or_default(),
             position_covariance_type: position_covariance_type as i32,
+            heading,
+            velocity: velocity.map(Into::into),
             color: color.map(Into::into),
             metadata: metadata
                 .unwrap_or_default()
@@ -1578,7 +1654,7 @@ impl LocationFix {
     }
     fn __repr__(&self) -> String {
         format!(
-            "LocationFix(timestamp={:?}, frame_id={:?}, latitude={:?}, longitude={:?}, altitude={:?}, position_covariance={:?}, position_covariance_type={:?}, color={:?}, metadata={:?})",
+            "LocationFix(timestamp={:?}, frame_id={:?}, latitude={:?}, longitude={:?}, altitude={:?}, position_covariance={:?}, position_covariance_type={:?}, heading={:?}, velocity={:?}, color={:?}, metadata={:?})",
             self.0.timestamp,
             self.0.frame_id,
             self.0.latitude,
@@ -1586,6 +1662,8 @@ impl LocationFix {
             self.0.altitude,
             self.0.position_covariance,
             self.0.position_covariance_type,
+            self.0.heading,
+            self.0.velocity,
             self.0.color,
             self.0.metadata,
         )
@@ -2774,6 +2852,15 @@ impl From<RawAudio> for foxglove::messages::RawAudio {
 ///       - Pixel channel values are represented as unsigned 8-bit integers.
 ///       - U and V values are shared between horizontal pairs of pixels. Each pair of output pixels is encoded as [Y1, U, Y2, V].
 ///       - `step` must be greater than or equal to `width` * 2.
+///     - `nv12`:
+///       - Pixel colors are decomposed into `Y'UV <https://en.wikipedia.org/wiki/Y%E2%80%B2UV>`__ channels using 4:2:0 chroma subsampling. The data is stored in `NV12 <https://www.kernel.org/doc/html/v4.10/media/uapi/v4l/pixfmt-nv12.html>`__ semi-planar layout with two contiguous planes: a Y (luma) plane followed by an interleaved UV (chroma) plane.
+///       - All channel values are represented as unsigned 8-bit integers.
+///       - Both planes use `step` as their row stride.
+///       - The Y plane contains one luma value per pixel (`step` * `height` bytes).
+///       - The UV plane contains interleaved U, V chroma pairs, subsampled by a factor of 2 in both dimensions (`width`/2 pairs per row, `height`/2 rows, `step` * `height`/2 bytes). Each U, V pair is shared by a 2x2 block of pixels.
+///       - `width` and `height` must be even.
+///       - `step` must be greater than or equal to `width`.
+///       - Total `data` length is `step` * `height` * 3/2 bytes.
 ///     - `rgb8`:
 ///       - Pixel colors are decomposed into Red, Green, and Blue channels.
 ///       - Pixel channel values are represented as unsigned 8-bit integers.
@@ -2801,7 +2888,7 @@ impl From<RawAudio> for foxglove::messages::RawAudio {
 ///       - Pixel colors are decomposed into Red, Blue and Green channels.
 ///       - Pixel channel values are represented as unsigned 8-bit integers, and serialized in a 2x2 bayer filter pattern.
 ///       - The order of the four letters after `bayer_` determine the layout, so for `bayer_wxyz8` the pattern is:
-///       ```plaintext
+///       ```text
 ///       w | x
 ///       - + -
 ///       y | z
@@ -3268,6 +3355,56 @@ impl From<Vector3> for foxglove::messages::Vector3 {
     }
 }
 
+/// A velocity vector in 3D space
+///
+/// :param x: x component
+/// :param y: y component
+/// :param z: z component
+///
+/// See https://docs.foxglove.dev/docs/visualization/message-schemas/velocity3
+#[pyclass(module = "foxglove.messages")]
+#[derive(Clone)]
+pub(crate) struct Velocity3(pub(crate) foxglove::messages::Velocity3);
+#[pymethods]
+impl Velocity3 {
+    #[new]
+    #[pyo3(signature = (*, x=0.0, y=0.0, z=0.0) )]
+    fn new(x: f64, y: f64, z: f64) -> Self {
+        Self(foxglove::messages::Velocity3 { x, y, z })
+    }
+    fn __repr__(&self) -> String {
+        format!(
+            "Velocity3(x={:?}, y={:?}, z={:?})",
+            self.0.x, self.0.y, self.0.z,
+        )
+    }
+    /// Returns the Velocity3 schema.
+    #[staticmethod]
+    fn get_schema() -> PySchema {
+        foxglove::messages::Velocity3::get_schema().unwrap().into()
+    }
+    /// Encodes the Velocity3 as protobuf.
+    fn encode<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
+        PyBytes::new_with(
+            py,
+            self.0.encoded_len().expect("foxglove schemas provide len"),
+            |mut b: &mut [u8]| {
+                self.0
+                    .encode(&mut b)
+                    .expect("encoding len was provided above");
+                Ok(())
+            },
+        )
+        .expect("failed to allocate buffer for encoded message")
+    }
+}
+
+impl From<Velocity3> for foxglove::messages::Velocity3 {
+    fn from(value: Velocity3) -> Self {
+        value.0
+    }
+}
+
 pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let module = PyModule::new(parent_module.py(), "messages")?;
 
@@ -3282,6 +3419,7 @@ pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<CircleAnnotation>()?;
     module.add_class::<Color>()?;
     module.add_class::<CompressedImage>()?;
+    module.add_class::<CompressedPointCloud>()?;
     module.add_class::<CompressedVideo>()?;
     module.add_class::<CylinderPrimitive>()?;
     module.add_class::<CubePrimitive>()?;
@@ -3323,6 +3461,7 @@ pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<TriangleListPrimitive>()?;
     module.add_class::<Vector2>()?;
     module.add_class::<Vector3>()?;
+    module.add_class::<Velocity3>()?;
 
     // Define as a package
     // https://github.com/PyO3/pyo3/issues/759

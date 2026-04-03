@@ -1014,6 +1014,194 @@ pub unsafe extern "C" fn foxglove_compressed_image_encode(
     }
 }
 
+/// A compressed point cloud. A decoder for `format` must decompress `data`, using metadata stored in the compressed payload to recover point positions and any additional per-point attributes. The decoded point cloud must include at least 2 coordinate fields from `x`, `y`, and `z`; `red`, `green`, `blue`, and `alpha` are optional for customizing each point's color.
+#[repr(C)]
+pub struct CompressedPointCloud {
+    /// Timestamp of point cloud
+    pub timestamp: *const FoxgloveTimestamp,
+
+    /// Frame of reference
+    pub frame_id: FoxgloveString,
+
+    /// The origin of the point cloud relative to the frame of reference
+    pub pose: *const Pose,
+
+    /// Compressed point cloud data for exactly one point cloud, including any format-specific metadata needed to describe the decoded point attributes.
+    pub data: *const c_uchar,
+    pub data_len: usize,
+
+    /// Point cloud compression format.
+    ///
+    /// Supported values: `draco` ([Google Draco](https://google.github.io/draco/)).
+    pub format: FoxgloveString,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl CompressedPointCloud {
+    /// Create a new typed channel, and return an owned raw channel pointer to it.
+    ///
+    /// # Safety
+    /// We're trusting the caller that the channel will only be used with this type T.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn foxglove_channel_create_compressed_point_cloud(
+        topic: FoxgloveString,
+        context: *const FoxgloveContext,
+        channel: *mut *const FoxgloveChannel,
+    ) -> FoxgloveError {
+        if channel.is_null() {
+            tracing::error!("channel cannot be null");
+            return FoxgloveError::ValueError;
+        }
+        unsafe {
+            let result = do_foxglove_channel_create::<foxglove::messages::CompressedPointCloud>(
+                topic, context,
+            );
+            result_to_c(result, channel)
+        }
+    }
+}
+
+impl BorrowToNative for CompressedPointCloud {
+    type NativeType = foxglove::messages::CompressedPointCloud;
+
+    unsafe fn borrow_to_native(
+        &self,
+        #[allow(unused_mut, unused_variables)] mut arena: Pin<&mut Arena>,
+    ) -> Result<ManuallyDrop<Self::NativeType>, foxglove::FoxgloveError> {
+        let frame_id = unsafe {
+            string_from_raw(
+                self.frame_id.as_ptr() as *const _,
+                self.frame_id.len(),
+                "frame_id",
+            )?
+        };
+        let pose = unsafe {
+            self.pose
+                .as_ref()
+                .map(|m| m.borrow_to_native(arena.as_mut()))
+        }
+        .transpose()?;
+        let format = unsafe {
+            string_from_raw(
+                self.format.as_ptr() as *const _,
+                self.format.len(),
+                "format",
+            )?
+        };
+
+        Ok(ManuallyDrop::new(
+            foxglove::messages::CompressedPointCloud {
+                timestamp: unsafe { self.timestamp.as_ref() }.map(|&m| m.into()),
+                frame_id: ManuallyDrop::into_inner(frame_id),
+                pose: pose.map(ManuallyDrop::into_inner),
+                data: ManuallyDrop::into_inner(unsafe { bytes_from_raw(self.data, self.data_len) }),
+                format: ManuallyDrop::into_inner(format),
+            },
+        ))
+    }
+}
+
+/// Log a CompressedPointCloud message to a channel.
+///
+/// # Safety
+/// The channel must have been created for this type with foxglove_channel_create_compressed_point_cloud.
+#[cfg(not(target_family = "wasm"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn foxglove_channel_log_compressed_point_cloud(
+    channel: Option<&FoxgloveChannel>,
+    msg: Option<&CompressedPointCloud>,
+    log_time: Option<&u64>,
+    sink_id: FoxgloveSinkId,
+) -> FoxgloveError {
+    let mut arena = pin!(Arena::new());
+    let arena_pin = arena.as_mut();
+    // Safety: we're borrowing from the msg, but discard the borrowed message before returning
+    match unsafe { CompressedPointCloud::borrow_option_to_native(msg, arena_pin) } {
+        Ok(msg) => {
+            // Safety: this casts channel back to a typed channel for type of msg, it must have been created for this type.
+            log_msg_to_channel(channel, &*msg, log_time, sink_id)
+        }
+        Err(e) => {
+            tracing::error!("CompressedPointCloud: {}", e);
+            e.into()
+        }
+    }
+}
+
+/// Get the CompressedPointCloud schema.
+///
+/// All buffers in the returned schema are statically allocated.
+#[allow(
+    clippy::missing_safety_doc,
+    reason = "no preconditions and returned lifetime is static"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn foxglove_compressed_point_cloud_schema() -> FoxgloveSchema {
+    let native = foxglove::messages::CompressedPointCloud::get_schema()
+        .expect("CompressedPointCloud schema is Some");
+    let name: &'static str = "foxglove.CompressedPointCloud";
+    let encoding: &'static str = "protobuf";
+    assert_eq!(name, &native.name);
+    assert_eq!(encoding, &native.encoding);
+    let std::borrow::Cow::Borrowed(data) = native.data else {
+        unreachable!("CompressedPointCloud schema data is static");
+    };
+    FoxgloveSchema {
+        name: name.into(),
+        encoding: encoding.into(),
+        data: data.as_ptr(),
+        data_len: data.len(),
+    }
+}
+
+/// Encode a CompressedPointCloud message as protobuf to the buffer provided.
+///
+/// On success, writes the encoded length to *encoded_len.
+/// If the provided buffer has insufficient capacity, writes the required capacity to *encoded_len and
+/// returns FOXGLOVE_ERROR_BUFFER_TOO_SHORT.
+/// If the message cannot be encoded, logs the reason to stderr and returns FOXGLOVE_ERROR_ENCODE.
+///
+/// # Safety
+/// ptr must be a valid pointer to a memory region at least len bytes long.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn foxglove_compressed_point_cloud_encode(
+    msg: Option<&CompressedPointCloud>,
+    ptr: *mut u8,
+    len: usize,
+    encoded_len: Option<&mut usize>,
+) -> FoxgloveError {
+    let mut arena = pin!(Arena::new());
+    let arena_pin = arena.as_mut();
+    // Safety: we're borrowing from the msg, but discard the borrowed message before returning
+    match unsafe { CompressedPointCloud::borrow_option_to_native(msg, arena_pin) } {
+        Ok(msg) => {
+            if len == 0 || ptr.is_null() {
+                if let Some(encoded_len) = encoded_len {
+                    *encoded_len = msg
+                        .encoded_len()
+                        .expect("foxglove messages return Some(len)");
+                }
+                return FoxgloveError::BufferTooShort;
+            }
+            let mut buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+            if let Err(encode_error) = msg.encode(&mut buf) {
+                if let Some(encoded_len) = encoded_len {
+                    *encoded_len = encode_error.required_capacity();
+                }
+                return FoxgloveError::BufferTooShort;
+            }
+            if let Some(encoded_len) = encoded_len {
+                *encoded_len = len - buf.len();
+            }
+            FoxgloveError::Ok
+        }
+        Err(e) => {
+            tracing::error!("CompressedPointCloud: {}", e);
+            FoxgloveError::EncodeError
+        }
+    }
+}
+
 /// A single frame of a compressed video bitstream
 #[repr(C)]
 pub struct CompressedVideo {
@@ -3555,6 +3743,12 @@ pub struct LocationFix {
     /// If `position_covariance` is available, `position_covariance_type` must be set to indicate the type of covariance.
     pub position_covariance_type: FoxglovePositionCovarianceType,
 
+    /// Heading (yaw angle), in radians, measured clockwise from north
+    pub heading: *const f64,
+
+    /// Velocity in local East-North-Up (ENU) frame in m/s
+    pub velocity: *const Velocity3,
+
     /// Color used to visualize the location
     pub color: *const Color,
 
@@ -3601,6 +3795,12 @@ impl BorrowToNative for LocationFix {
                 "frame_id",
             )?
         };
+        let velocity = unsafe {
+            self.velocity
+                .as_ref()
+                .map(|m| m.borrow_to_native(arena.as_mut()))
+        }
+        .transpose()?;
         let color = unsafe {
             self.color
                 .as_ref()
@@ -3622,6 +3822,8 @@ impl BorrowToNative for LocationFix {
                 )
             }),
             position_covariance_type: self.position_covariance_type as i32,
+            heading: unsafe { self.heading.as_ref().copied() },
+            velocity: velocity.map(ManuallyDrop::into_inner),
             color: color.map(ManuallyDrop::into_inner),
             metadata: ManuallyDrop::into_inner(metadata),
         }))
@@ -6628,6 +6830,15 @@ pub struct RawImage {
     ///   - Pixel channel values are represented as unsigned 8-bit integers.
     ///   - U and V values are shared between horizontal pairs of pixels. Each pair of output pixels is encoded as [Y1, U, Y2, V].
     ///   - `step` must be greater than or equal to `width` * 2.
+    /// - `nv12`:
+    ///   - Pixel colors are decomposed into [Y'UV](https://en.wikipedia.org/wiki/Y%E2%80%B2UV) channels using 4:2:0 chroma subsampling. The data is stored in [NV12](https://www.kernel.org/doc/html/v4.10/media/uapi/v4l/pixfmt-nv12.html) semi-planar layout with two contiguous planes: a Y (luma) plane followed by an interleaved UV (chroma) plane.
+    ///   - All channel values are represented as unsigned 8-bit integers.
+    ///   - Both planes use `step` as their row stride.
+    ///   - The Y plane contains one luma value per pixel (`step` * `height` bytes).
+    ///   - The UV plane contains interleaved U, V chroma pairs, subsampled by a factor of 2 in both dimensions (`width`/2 pairs per row, `height`/2 rows, `step` * `height`/2 bytes). Each U, V pair is shared by a 2x2 block of pixels.
+    ///   - `width` and `height` must be even.
+    ///   - `step` must be greater than or equal to `width`.
+    ///   - Total `data` length is `step` * `height` * 3/2 bytes.
     /// - `rgb8`:
     ///   - Pixel colors are decomposed into Red, Green, and Blue channels.
     ///   - Pixel channel values are represented as unsigned 8-bit integers.
@@ -6655,7 +6866,7 @@ pub struct RawImage {
     ///   - Pixel colors are decomposed into Red, Blue and Green channels.
     ///   - Pixel channel values are represented as unsigned 8-bit integers, and serialized in a 2x2 bayer filter pattern.
     ///   - The order of the four letters after `bayer_` determine the layout, so for `bayer_wxyz8` the pattern is:
-    ///   ```plaintext
+    ///   ```text
     ///   w | x
     ///   - + -
     ///   y | z
@@ -7853,6 +8064,158 @@ pub unsafe extern "C" fn foxglove_vector3_encode(
         }
         Err(e) => {
             tracing::error!("Vector3: {}", e);
+            FoxgloveError::EncodeError
+        }
+    }
+}
+
+/// A velocity vector in 3D space
+#[repr(C)]
+pub struct Velocity3 {
+    /// x component
+    pub x: f64,
+
+    /// y component
+    pub y: f64,
+
+    /// z component
+    pub z: f64,
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl Velocity3 {
+    /// Create a new typed channel, and return an owned raw channel pointer to it.
+    ///
+    /// # Safety
+    /// We're trusting the caller that the channel will only be used with this type T.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn foxglove_channel_create_velocity3(
+        topic: FoxgloveString,
+        context: *const FoxgloveContext,
+        channel: *mut *const FoxgloveChannel,
+    ) -> FoxgloveError {
+        if channel.is_null() {
+            tracing::error!("channel cannot be null");
+            return FoxgloveError::ValueError;
+        }
+        unsafe {
+            let result =
+                do_foxglove_channel_create::<foxglove::messages::Velocity3>(topic, context);
+            result_to_c(result, channel)
+        }
+    }
+}
+
+impl BorrowToNative for Velocity3 {
+    type NativeType = foxglove::messages::Velocity3;
+
+    unsafe fn borrow_to_native(
+        &self,
+        #[allow(unused_mut, unused_variables)] mut arena: Pin<&mut Arena>,
+    ) -> Result<ManuallyDrop<Self::NativeType>, foxglove::FoxgloveError> {
+        Ok(ManuallyDrop::new(foxglove::messages::Velocity3 {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+        }))
+    }
+}
+
+/// Log a Velocity3 message to a channel.
+///
+/// # Safety
+/// The channel must have been created for this type with foxglove_channel_create_velocity3.
+#[cfg(not(target_family = "wasm"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn foxglove_channel_log_velocity3(
+    channel: Option<&FoxgloveChannel>,
+    msg: Option<&Velocity3>,
+    log_time: Option<&u64>,
+    sink_id: FoxgloveSinkId,
+) -> FoxgloveError {
+    let mut arena = pin!(Arena::new());
+    let arena_pin = arena.as_mut();
+    // Safety: we're borrowing from the msg, but discard the borrowed message before returning
+    match unsafe { Velocity3::borrow_option_to_native(msg, arena_pin) } {
+        Ok(msg) => {
+            // Safety: this casts channel back to a typed channel for type of msg, it must have been created for this type.
+            log_msg_to_channel(channel, &*msg, log_time, sink_id)
+        }
+        Err(e) => {
+            tracing::error!("Velocity3: {}", e);
+            e.into()
+        }
+    }
+}
+
+/// Get the Velocity3 schema.
+///
+/// All buffers in the returned schema are statically allocated.
+#[allow(
+    clippy::missing_safety_doc,
+    reason = "no preconditions and returned lifetime is static"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn foxglove_velocity3_schema() -> FoxgloveSchema {
+    let native = foxglove::messages::Velocity3::get_schema().expect("Velocity3 schema is Some");
+    let name: &'static str = "foxglove.Velocity3";
+    let encoding: &'static str = "protobuf";
+    assert_eq!(name, &native.name);
+    assert_eq!(encoding, &native.encoding);
+    let std::borrow::Cow::Borrowed(data) = native.data else {
+        unreachable!("Velocity3 schema data is static");
+    };
+    FoxgloveSchema {
+        name: name.into(),
+        encoding: encoding.into(),
+        data: data.as_ptr(),
+        data_len: data.len(),
+    }
+}
+
+/// Encode a Velocity3 message as protobuf to the buffer provided.
+///
+/// On success, writes the encoded length to *encoded_len.
+/// If the provided buffer has insufficient capacity, writes the required capacity to *encoded_len and
+/// returns FOXGLOVE_ERROR_BUFFER_TOO_SHORT.
+/// If the message cannot be encoded, logs the reason to stderr and returns FOXGLOVE_ERROR_ENCODE.
+///
+/// # Safety
+/// ptr must be a valid pointer to a memory region at least len bytes long.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn foxglove_velocity3_encode(
+    msg: Option<&Velocity3>,
+    ptr: *mut u8,
+    len: usize,
+    encoded_len: Option<&mut usize>,
+) -> FoxgloveError {
+    let mut arena = pin!(Arena::new());
+    let arena_pin = arena.as_mut();
+    // Safety: we're borrowing from the msg, but discard the borrowed message before returning
+    match unsafe { Velocity3::borrow_option_to_native(msg, arena_pin) } {
+        Ok(msg) => {
+            if len == 0 || ptr.is_null() {
+                if let Some(encoded_len) = encoded_len {
+                    *encoded_len = msg
+                        .encoded_len()
+                        .expect("foxglove messages return Some(len)");
+                }
+                return FoxgloveError::BufferTooShort;
+            }
+            let mut buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+            if let Err(encode_error) = msg.encode(&mut buf) {
+                if let Some(encoded_len) = encoded_len {
+                    *encoded_len = encode_error.required_capacity();
+                }
+                return FoxgloveError::BufferTooShort;
+            }
+            if let Some(encoded_len) = encoded_len {
+                *encoded_len = len - buf.len();
+            }
+            FoxgloveError::Ok
+        }
+        Err(e) => {
+            tracing::error!("Velocity3: {}", e);
             FoxgloveError::EncodeError
         }
     }

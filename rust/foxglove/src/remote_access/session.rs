@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
+use indexmap::IndexSet;
 use libwebrtc::video_source::{RtcVideoSource, native::NativeVideoSource};
 use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
@@ -15,14 +16,20 @@ use tokio_util::{io::StreamReader, sync::CancellationToken};
 use tracing::{debug, error, info, warn};
 
 use crate::protocol::v2::DecodeError;
+use crate::protocol::v2::parameter::Parameter;
+use crate::protocol::v2::server::ParameterValues;
 use crate::remote_access::participant::ChannelWriter;
+use crate::remote_common::service::{CallId, Service, ServiceId, ServiceMap};
 use crate::{
     ChannelDescriptor, ChannelId, Context, FoxgloveError, Metadata, RawChannel, Schema, Sink,
     SinkChannelFilter, SinkId,
     protocol::v2::{
         BinaryMessage, JsonMessage,
         client::{self, ClientMessage},
-        server::{MessageData as ServerMessageData, ServerInfo, Status, Unadvertise, advertise},
+        server::{
+            AdvertiseServices, MessageData as ServerMessageData, ServerInfo, ServiceCallFailure,
+            Status, Unadvertise, UnadvertiseServices, advertise, advertise_services,
+        },
     },
     remote_access::{
         Capability, Listener, RemoteAccessError, client::Client, participant::Participant,
@@ -42,11 +49,13 @@ pub(crate) struct SessionStats {
     pub video_tracks: usize,
 }
 
-const WS_PROTOCOL_TOPIC: &str = "ws-protocol";
-const CHANNEL_TOPIC_PREFIX: &str = "ch-";
+const CONTROL_CHANNEL_TOPIC: &str = "control";
+const CHANNEL_TOPIC_PREFIX: &str = "device-ch-";
+const CLIENT_CHANNEL_TOPIC_PREFIX: &str = "client-ch-";
 const MESSAGE_FRAME_SIZE: usize = 5; // 1 byte opcode + u32 LE length
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MiB
 const MAX_SEND_RETRIES: usize = 3;
+pub(crate) const DEFAULT_PENDING_CLIENT_READER_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A data plane message queued for delivery to subscribed participants.
 struct ChannelMessage {
@@ -54,10 +63,38 @@ struct ChannelMessage {
     data: Bytes,
 }
 
+impl ChannelMessage {
+    fn binary<'a>(channel_id: ChannelId, message: &impl BinaryMessage<'a>) -> Self {
+        Self {
+            channel_id,
+            data: encode_binary_message(message),
+        }
+    }
+}
+
 /// A control plane message queued for delivery to a specific participant.
-struct ControlPlaneMessage {
+pub(super) struct ControlPlaneMessage {
     participant: Arc<Participant>,
     data: Bytes,
+}
+
+impl ControlPlaneMessage {
+    pub(super) fn json(participant: Arc<Participant>, message: &impl JsonMessage) -> Self {
+        Self {
+            participant,
+            data: encode_json_message(message),
+        }
+    }
+
+    pub(super) fn binary<'a>(
+        participant: Arc<Participant>,
+        message: &impl BinaryMessage<'a>,
+    ) -> Self {
+        Self {
+            participant,
+            data: encode_binary_message(message),
+        }
+    }
 }
 
 /// The operation code for the message framing for protocol v2.
@@ -71,8 +108,10 @@ enum OpCode {
     Binary = 2,
 }
 
-/// Frames a text payload with the v2 message framing (1 byte opcode + 4 byte LE length + payload).
-fn frame_text_message(payload: &[u8]) -> Bytes {
+/// Encodes a JSON message with the v2 byte stream framing (1 byte opcode + 4 byte LE length + payload).
+fn encode_json_message(message: &impl JsonMessage) -> Bytes {
+    let payload = message.to_string();
+    let payload = payload.as_bytes();
     let mut buf = Vec::with_capacity(MESSAGE_FRAME_SIZE + payload.len());
     buf.push(OpCode::Text as u8);
     let len = u32::try_from(payload.len()).expect("message too large");
@@ -94,6 +133,26 @@ fn encode_binary_message<'a>(message: &impl BinaryMessage<'a>) -> Bytes {
     Bytes::from(buf)
 }
 
+fn build_advertise_services_msg(services: &[Arc<Service>]) -> Option<AdvertiseServices<'_>> {
+    if services.is_empty() {
+        return None;
+    }
+    let msg = AdvertiseServices::new(services.iter().filter_map(|s| {
+        advertise_services::Service::try_from(s.as_ref())
+            .inspect_err(|err| {
+                error!(
+                    "Failed to encode service advertisement for {}: {err}",
+                    s.name()
+                )
+            })
+            .ok()
+    }));
+    if msg.services.is_empty() {
+        return None;
+    }
+    Some(msg)
+}
+
 /// RemoteAccessSession tracks a connected LiveKit session (the Room)
 /// and any state that is specific to that session.
 /// We discard this state if we close or lose the connection.
@@ -105,6 +164,7 @@ pub(crate) struct RemoteAccessSession {
     sink_id: SinkId,
     room: Room,
     context: Weak<Context>,
+    remote_access_session_id: Option<String>,
     state: RwLock<SessionState>,
     channel_filter: Option<Arc<dyn SinkChannelFilter>>,
     listener: Option<Arc<dyn Listener>>,
@@ -114,6 +174,8 @@ pub(crate) struct RemoteAccessSession {
     data_plane_rx: flume::Receiver<ChannelMessage>,
     control_plane_tx: flume::Sender<ControlPlaneMessage>,
     control_plane_rx: flume::Receiver<ControlPlaneMessage>,
+    services: Arc<parking_lot::RwLock<ServiceMap>>,
+    supported_encodings: IndexSet<String>,
     /// Serializes all participant-scoped state mutations: subscription changes, video track
     /// lifecycle operations, client channel advertise/unadvertise, and participant removal.
     /// This prevents TOCTOU races between byte-stream message handlers and room-event handlers,
@@ -123,6 +185,12 @@ pub(crate) struct RemoteAccessSession {
     /// the sender loop to re-advertise affected channels.
     video_metadata_tx: tokio::sync::watch::Sender<()>,
     video_metadata_rx: tokio::sync::watch::Receiver<()>,
+    /// Byte stream readers for `client-ch-{channelId}` streams that arrived before the
+    /// corresponding Client Advertise message. Keyed by participant identity then channel ID.
+    /// Drained when the advertise arrives; expired after `pending_client_reader_timeout`.
+    pending_client_readers:
+        parking_lot::Mutex<HashMap<ParticipantIdentity, HashMap<ChannelId, ByteStreamReader>>>,
+    pending_client_reader_timeout: Duration,
 }
 
 impl Sink for RemoteAccessSession {
@@ -149,8 +217,7 @@ impl Sink for RemoteAccessSession {
         if state.has_data_subscribers(&channel_id) {
             drop(state);
             let message = ServerMessageData::new(u64::from(channel_id), metadata.log_time, msg);
-            let data = encode_binary_message(&message);
-            self.send_data_lossy(ChannelMessage { channel_id, data });
+            self.send_data_lossy(ChannelMessage::binary(channel_id, &message));
         }
 
         Ok(())
@@ -193,8 +260,7 @@ impl Sink for RemoteAccessSession {
             state.add_metadata_to_advertisement(&mut advertise_msg);
         }
 
-        let framed = frame_text_message(advertise_msg.to_string().as_bytes());
-        self.broadcast_control(framed);
+        self.broadcast_control(encode_json_message(&advertise_msg));
 
         // Clients subscribe asynchronously.
         None
@@ -211,8 +277,7 @@ impl Sink for RemoteAccessSession {
         self.state.write().remove_video_schema(&channel_id);
 
         let unadvertise = Unadvertise::new([u64::from(channel_id)]);
-        let framed = frame_text_message(unadvertise.to_string().as_bytes());
-        self.broadcast_control(framed);
+        self.broadcast_control(encode_json_message(&unadvertise));
     }
 
     fn auto_subscribe(&self) -> bool {
@@ -220,28 +285,35 @@ impl Sink for RemoteAccessSession {
     }
 }
 
+pub(crate) struct SessionParams {
+    pub room: Room,
+    pub context: Weak<Context>,
+    pub channel_filter: Option<Arc<dyn SinkChannelFilter>>,
+    pub listener: Option<Arc<dyn Listener>>,
+    pub capabilities: Vec<Capability>,
+    pub supported_encodings: IndexSet<String>,
+    pub cancellation_token: CancellationToken,
+    pub message_backlog_size: usize,
+    pub services: Arc<parking_lot::RwLock<ServiceMap>>,
+    pub pending_client_reader_timeout: Duration,
+    pub remote_access_session_id: Option<String>,
+}
+
 impl RemoteAccessSession {
-    pub(crate) fn new(
-        room: Room,
-        context: Weak<Context>,
-        channel_filter: Option<Arc<dyn SinkChannelFilter>>,
-        listener: Option<Arc<dyn Listener>>,
-        capabilities: Vec<Capability>,
-        cancellation_token: CancellationToken,
-        message_backlog_size: usize,
-    ) -> Self {
-        let (data_plane_tx, data_plane_rx) = flume::bounded(message_backlog_size);
-        let (control_plane_tx, control_plane_rx) = flume::bounded(message_backlog_size);
+    pub(crate) fn new(params: SessionParams) -> Self {
+        let (data_plane_tx, data_plane_rx) = flume::bounded(params.message_backlog_size);
+        let (control_plane_tx, control_plane_rx) = flume::bounded(params.message_backlog_size);
         let (video_metadata_tx, video_metadata_rx) = tokio::sync::watch::channel(());
         Self {
             sink_id: SinkId::next(),
-            room,
-            context,
+            room: params.room,
+            context: params.context,
+            remote_access_session_id: params.remote_access_session_id,
             state: RwLock::new(SessionState::new()),
-            channel_filter,
-            listener,
-            capabilities,
-            cancellation_token,
+            channel_filter: params.channel_filter,
+            listener: params.listener,
+            capabilities: params.capabilities,
+            cancellation_token: params.cancellation_token,
             data_plane_tx,
             data_plane_rx,
             control_plane_tx,
@@ -249,12 +321,20 @@ impl RemoteAccessSession {
             subscription_lock: parking_lot::Mutex::new(()),
             video_metadata_tx,
             video_metadata_rx,
+            pending_client_readers: parking_lot::Mutex::new(HashMap::new()),
+            pending_client_reader_timeout: params.pending_client_reader_timeout,
+            services: params.services,
+            supported_encodings: params.supported_encodings,
         }
     }
 
     /// Returns true if the given capability is enabled for this session.
     fn has_capability(&self, cap: Capability) -> bool {
         self.capabilities.contains(&cap)
+    }
+
+    pub(crate) fn remote_access_session_id(&self) -> Option<&str> {
+        self.remote_access_session_id.as_deref()
     }
 
     pub(crate) fn sink_id(&self) -> SinkId {
@@ -316,16 +396,14 @@ impl RemoteAccessSession {
     fn send_error(&self, participant: &Arc<Participant>, message: String) {
         debug!("Sending error to {participant}: {message}");
         let status = Status::error(message);
-        let framed = frame_text_message(status.to_string().as_bytes());
-        self.send_control(participant.clone(), framed);
+        self.send_control(participant.clone(), encode_json_message(&status));
     }
 
     /// Send a warning status message to a participant.
     fn send_warning(&self, participant: &Arc<Participant>, message: String) {
         debug!("Sending warning to {participant}: {message}");
         let status = Status::warning(message);
-        let framed = frame_text_message(status.to_string().as_bytes());
-        self.send_control(participant.clone(), framed);
+        self.send_control(participant.clone(), encode_json_message(&status));
     }
 
     /// Enqueue a control plane message for all currently connected participants.
@@ -402,10 +480,17 @@ impl RemoteAccessSession {
         }
     }
 
+    /// Read framed messages from a client byte stream.
+    ///
+    /// `expected_channel_id` identifies a `client-ch-{channelId}` stream: the channel ID parsed from
+    /// the topic name. Every `MessageData` frame on this stream must carry the same channel ID;
+    /// mismatches are considered a protocol violation (debug-asserted). Pass `None` for the
+    /// `"control"` control stream.
     pub(crate) async fn handle_byte_stream_from_client(
         self: &Arc<Self>,
         participant_identity: ParticipantIdentity,
         reader: ByteStreamReader,
+        expected_channel_id: Option<u32>,
     ) {
         let stream = reader.map(|result| result.map_err(std::io::Error::other));
         let mut reader = StreamReader::new(stream);
@@ -457,15 +542,121 @@ impl RemoteAccessSession {
                 }
             }
 
-            if !self.handle_client_message(&participant_identity, opcode, Bytes::from(payload)) {
+            if let Some(channel_id) = expected_channel_id {
+                if !self.handle_channel_stream_message(
+                    &participant_identity,
+                    channel_id,
+                    opcode,
+                    &payload,
+                ) {
+                    return;
+                }
+            } else if !self.handle_client_control_message(
+                &participant_identity,
+                opcode,
+                Bytes::from(payload),
+            ) {
                 return;
             }
         }
     }
 
-    /// Handle a single framed client message. Returns `false` if the byte stream
+    /// Handle an incoming `client-ch-{channelId}` byte stream.
+    ///
+    /// If the client has already advertised this channel, the stream is read immediately.
+    /// Otherwise the reader is stashed until the Client Advertise arrives (or a timeout
+    /// expires), letting LiveKit buffer the data in the meantime.
+    pub(crate) fn handle_client_channel_stream(
+        self: &Arc<Self>,
+        participant_identity: ParticipantIdentity,
+        channel_id: ChannelId,
+        reader: ByteStreamReader,
+    ) {
+        if !self.has_capability(Capability::ClientPublish) {
+            drop(reader);
+            warn!(
+                "Received client channel stream from {participant_identity:?} but clientPublish capability is not enabled"
+            );
+            if let Some(participant) = self.state.read().get_participant(&participant_identity) {
+                self.send_error(
+                    &participant,
+                    "Server does not support clientPublish capability".to_string(),
+                );
+            }
+            return;
+        }
+
+        // Hold the pending lock across the state check and potential insert to prevent a
+        // TOCTOU race with handle_client_advertise. The advertise path inserts the channel
+        // into state (releasing the state write lock) *then* acquires this lock to drain
+        // pending readers. By holding this lock while we check state, we guarantee that
+        // either we see the channel (and process immediately) or the advertise path will
+        // see our pending reader (and drain it).
+        let mut pending = self.pending_client_readers.lock();
+        let has_channel = self
+            .state
+            .read()
+            .get_client_channel(&participant_identity, channel_id)
+            .is_some();
+
+        if has_channel {
+            drop(pending);
+            let session = self.clone();
+            let expected_channel_id = u64::from(channel_id) as u32;
+            tokio::spawn(async move {
+                session
+                    .handle_byte_stream_from_client(
+                        participant_identity,
+                        reader,
+                        Some(expected_channel_id),
+                    )
+                    .await;
+            });
+            return;
+        }
+
+        let map = pending.entry(participant_identity.clone()).or_default();
+        if let Some(_old) = map.insert(channel_id, reader) {
+            debug!("replacing pending reader for {participant_identity:?} channel {channel_id:?}");
+        }
+        drop(pending);
+
+        let session = self.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                () = session.cancellation_token.cancelled() => {}
+                () = tokio::time::sleep(session.pending_client_reader_timeout) => {
+                    let removed = {
+                        let mut pending = session.pending_client_readers.lock();
+                        let reader = pending
+                            .get_mut(&participant_identity)
+                            .and_then(|map| map.remove(&channel_id));
+                        if pending.get(&participant_identity).is_some_and(|m| m.is_empty()) {
+                            pending.remove(&participant_identity);
+                        }
+                        reader
+                    };
+                    if removed.is_some() {
+                        if let Some(participant) =
+                            session.state.read().get_participant(&participant_identity)
+                        {
+                            session.send_error(
+                                &participant,
+                                format!(
+                                    "Client has not advertised channel: {}",
+                                    u64::from(channel_id),
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Handle a single framed control channel message. Returns `false` if the byte stream
     /// should be closed (e.g. unrecognized opcode indicating a protocol mismatch).
-    fn handle_client_message(
+    fn handle_client_control_message(
         self: &Arc<Self>,
         participant_identity: &ParticipantIdentity,
         opcode: u8,
@@ -516,7 +707,26 @@ impl RemoteAccessSession {
             ClientMessage::Unadvertise(msg) => {
                 self.handle_client_unadvertise(&participant, msg);
             }
-            // TODO: Implement other message handling branches
+            ClientMessage::MessageData(_) => {
+                error!(
+                    "Received MessageData over control channel; MessageData is only supported on channel-specific byte streams"
+                );
+            }
+            ClientMessage::ServiceCallRequest(req) => {
+                self.handle_service_call(&participant, req);
+            }
+            ClientMessage::GetParameters(msg) => {
+                self.handle_get_parameters(&participant, msg.parameter_names, msg.id);
+            }
+            ClientMessage::SetParameters(msg) => {
+                self.handle_set_parameters(&participant, msg.parameters, msg.id);
+            }
+            ClientMessage::SubscribeParameterUpdates(msg) => {
+                self.handle_subscribe_parameter_updates(&participant, msg.parameter_names);
+            }
+            ClientMessage::UnsubscribeParameterUpdates(msg) => {
+                self.handle_unsubscribe_parameter_updates(&participant, msg.parameter_names);
+            }
             _ => {
                 warn!("Unhandled client message: {client_msg:?}");
             }
@@ -524,6 +734,10 @@ impl RemoteAccessSession {
         true
     }
 
+    /// Subscribes the participant to the requested channels and notifies the listener.
+    ///
+    /// Channels the participant is already subscribed to are silently skipped.
+    /// The context is notified only for channels gaining their first subscriber.
     fn handle_client_subscribe(
         self: &Arc<Self>,
         participant: &Arc<Participant>,
@@ -560,23 +774,39 @@ impl RemoteAccessSession {
         drop(state);
 
         let mut state = self.state.write();
-        let first_subscribed = state.subscribe(participant, &channel_ids);
+        let subscribe_result = state.subscribe(participant, &channel_ids);
         state.subscribe_data(participant, &data_channel_ids);
         state.unsubscribe_data(participant, &video_channel_ids);
         let first_video_subscribed = state.subscribe_video(participant, &video_channel_ids);
         let last_video_unsubscribed = state.unsubscribe_video(participant, &data_channel_ids);
         drop(state);
 
-        if !first_subscribed.is_empty() {
+        if !subscribe_result.first_subscribed.is_empty() {
             if let Some(context) = self.context.upgrade() {
-                context.subscribe_channels(self.sink_id, &first_subscribed);
+                context.subscribe_channels(self.sink_id, &subscribe_result.first_subscribed);
             }
         }
 
         self.start_video_tracks(&first_video_subscribed);
         self.stop_video_tracks(&last_video_unsubscribed);
+
+        if let Some(listener) = &self.listener {
+            if !subscribe_result.newly_subscribed_descriptors.is_empty() {
+                let client = Client::new(
+                    participant.client_id(),
+                    participant.participant_id().clone(),
+                );
+                for descriptor in &subscribe_result.newly_subscribed_descriptors {
+                    listener.on_subscribe(client.clone(), descriptor);
+                }
+            }
+        }
     }
 
+    /// Unsubscribes the participant from the requested channels and notifies the listener.
+    ///
+    /// Channels the participant was not subscribed to are silently skipped.
+    /// The context is notified only for channels losing their last subscriber.
     fn handle_client_unsubscribe(
         self: &Arc<Self>,
         participant: &Participant,
@@ -590,22 +820,46 @@ impl RemoteAccessSession {
             .collect();
 
         let mut state = self.state.write();
-        let last_unsubscribed = state.unsubscribe(participant, &channel_ids);
+        let unsubscribe_result = state.unsubscribe(participant, &channel_ids);
         state.unsubscribe_data(participant, &channel_ids);
         let last_video_unsubscribed = state.unsubscribe_video(participant, &channel_ids);
         drop(state);
 
-        if !last_unsubscribed.is_empty() {
+        if !unsubscribe_result.last_unsubscribed.is_empty() {
             if let Some(context) = self.context.upgrade() {
-                context.unsubscribe_channels(self.sink_id, &last_unsubscribed);
+                context.unsubscribe_channels(self.sink_id, &unsubscribe_result.last_unsubscribed);
             }
         }
 
         self.stop_video_tracks(&last_video_unsubscribed);
+
+        if let Some(listener) = &self.listener {
+            if !unsubscribe_result
+                .actually_unsubscribed_descriptors
+                .is_empty()
+            {
+                let client = Client::new(
+                    participant.client_id(),
+                    participant.participant_id().clone(),
+                );
+                for descriptor in &unsubscribe_result.actually_unsubscribed_descriptors {
+                    listener.on_unsubscribe(client.clone(), descriptor);
+                }
+            }
+        }
     }
 
-    fn handle_client_advertise(&self, participant: &Arc<Participant>, msg: client::Advertise<'_>) {
+    fn handle_client_advertise(
+        self: &Arc<Self>,
+        participant: &Arc<Participant>,
+        msg: client::Advertise<'_>,
+    ) {
+        // Serialize with remove_participant, which also holds this lock. Without it,
+        // remove_participant can remove the participant from state between the point where
+        // handle_client_message resolves the participant and the point where
+        // insert_client_channel asserts its presence, causing a panic.
         let _guard = self.subscription_lock.lock();
+
         if !self.has_capability(Capability::ClientPublish) {
             self.send_error(
                 participant,
@@ -622,8 +876,7 @@ impl RemoteAccessSession {
         for ch in msg.channels {
             let channel_id = ChannelId::new(ch.id.into());
 
-            // Decode the schema. A missing schema is valid for encodings that don't require one
-            // (e.g. "json"); only return an error for malformed schema data.
+            // Decode the schema, tolerating absent schemas.
             let schema = match ch.decode_schema() {
                 Ok(data) => Some(Schema {
                     name: ch.schema_name.to_string(),
@@ -671,11 +924,32 @@ impl RemoteAccessSession {
             if let Some(listener) = &self.listener {
                 listener.on_client_advertise(client.clone(), &descriptor);
             }
+
+            // Drain any pending byte stream reader that arrived before this advertise.
+            let pending_reader = self
+                .pending_client_readers
+                .lock()
+                .get_mut(participant.participant_id())
+                .and_then(|map| map.remove(&channel_id));
+            if let Some(reader) = pending_reader {
+                let session = self.clone();
+                let identity = participant.participant_id().clone();
+                let expected_channel_id = u64::from(channel_id) as u32;
+                tokio::spawn(async move {
+                    session
+                        .handle_byte_stream_from_client(identity, reader, Some(expected_channel_id))
+                        .await;
+                });
+            }
         }
     }
 
     fn handle_client_unadvertise(&self, participant: &Arc<Participant>, msg: client::Unadvertise) {
+        // Serialize with remove_participant, which also holds this lock. Without it,
+        // remove_participant can race with this method and fire on_client_unadvertise for channels
+        // it already cleaned up, causing a double invocation of the listener callback.
         let _guard = self.subscription_lock.lock();
+
         let client = Client::new(
             participant.client_id(),
             participant.participant_id().clone(),
@@ -689,17 +963,108 @@ impl RemoteAccessSession {
                 .remove_client_channel(participant.participant_id(), channel_id);
 
             match removed {
-                None => {
-                    debug!(
-                        "Client is not advertising channel: {channel_id_raw}; ignoring unadvertisement"
-                    );
-                }
+                None => debug!(
+                    "Client is not advertising channel: {channel_id_raw}; ignoring unadvertisement"
+                ),
                 Some(descriptor) => {
                     if let Some(listener) = &self.listener {
                         listener.on_client_unadvertise(client.clone(), &descriptor);
                     }
                 }
             }
+        }
+    }
+
+    /// Handle a message from a `client-ch-{channelId}` byte stream.
+    ///
+    /// Only `MessageData` frames are expected. `expected_channel_id` is the channel ID parsed from
+    /// the stream topic and must match the `channel_id` field inside every `MessageData` frame.
+    /// A mismatch indicates a misbehaving client (the topic determines which stream carries the
+    /// data, but the channel ID inside the message determines which descriptor is used).
+    ///
+    /// Returns `false` if the stream should be closed (protocol violation that will repeat
+    /// for every subsequent frame), `true` to continue reading.
+    fn handle_channel_stream_message(
+        self: &Arc<Self>,
+        participant_identity: &ParticipantIdentity,
+        expected_channel_id: u32,
+        opcode: u8,
+        payload: &[u8],
+    ) -> bool {
+        const BINARY: u8 = OpCode::Binary as u8;
+        if opcode != BINARY {
+            error!("Unexpected non-binary message on channel stream (opcode {opcode})");
+            return true;
+        }
+        let msg = match ClientMessage::parse_binary(payload) {
+            Ok(ClientMessage::MessageData(msg)) => msg,
+            Ok(other) => {
+                error!(
+                    "Unexpected message on channel stream: {other:?}; only MessageData is supported"
+                );
+                return true;
+            }
+            Err(e) => {
+                error!("Failed to parse channel stream message: {e:?}");
+                return true;
+            }
+        };
+        if expected_channel_id != msg.channel_id {
+            error!(
+                "MessageData channel_id ({}) does not match the stream topic channel_id ({})",
+                msg.channel_id, expected_channel_id,
+            );
+            if let Some(participant) = self.state.read().get_participant(participant_identity) {
+                self.send_error(
+                    &participant,
+                    format!(
+                        "MessageData channel_id ({}) does not match the stream topic ({})",
+                        msg.channel_id, expected_channel_id,
+                    ),
+                );
+            }
+            return false;
+        }
+        let Some(participant) = self.state.read().get_participant(participant_identity) else {
+            error!("Unknown participant identity: {participant_identity:?}");
+            return false;
+        };
+        self.handle_client_message_data(&participant, msg);
+        true
+    }
+
+    fn handle_client_message_data(
+        &self,
+        participant: &Arc<Participant>,
+        msg: client::MessageData<'_>,
+    ) {
+        if !self.has_capability(Capability::ClientPublish) {
+            self.send_error(
+                participant,
+                "Server does not support clientPublish capability".to_string(),
+            );
+            return;
+        }
+        let channel_id = ChannelId::new(msg.channel_id.into());
+        let descriptor = {
+            let state = self.state.read();
+            state
+                .get_client_channel(participant.participant_id(), channel_id)
+                .cloned()
+        };
+        let Some(descriptor) = descriptor else {
+            self.send_error(
+                participant,
+                format!("Client has not advertised channel: {}", msg.channel_id),
+            );
+            return;
+        };
+        if let Some(listener) = &self.listener {
+            let client = Client::new(
+                participant.client_id(),
+                participant.participant_id().clone(),
+            );
+            listener.on_message_data(client, &descriptor, &msg.data);
         }
     }
 
@@ -725,7 +1090,7 @@ impl RemoteAccessSession {
             .room
             .local_participant()
             .stream_bytes(StreamByteOptions {
-                topic: WS_PROTOCOL_TOPIC.to_string(),
+                topic: CONTROL_CHANNEL_TOPIC.to_string(),
                 destination_identities: vec![participant_id.clone()],
                 ..StreamByteOptions::default()
             })
@@ -747,9 +1112,9 @@ impl RemoteAccessSession {
         // these are the first messages delivered to the participant. This is safe to do without
         // holding the write lock, because this is a new participant - see below.
         info!("sending server info and advertisements to participant {participant:?}");
-        let server_info_msg = frame_text_message(server_info.to_string().as_bytes());
-        self.send_control(participant.clone(), server_info_msg);
+        self.send_control(participant.clone(), encode_json_message(&server_info));
         self.send_channel_advertisements(participant.clone());
+        self.send_service_advertisements(participant.clone());
 
         // Add the participant to the state map. We assert that this is a new participant, because
         // we validated that it did not exist in the map at the top of this function, and the
@@ -768,6 +1133,9 @@ impl RemoteAccessSession {
     /// Channels that lose their last subscriber are unsubscribed from the context.
     pub(crate) fn remove_participant(self: &Arc<Self>, participant_id: &ParticipantIdentity) {
         let _guard = self.subscription_lock.lock();
+
+        self.pending_client_readers.lock().remove(participant_id);
+
         let removed = self.state.write().remove_participant(participant_id);
 
         if !removed.last_unsubscribed.is_empty() {
@@ -778,13 +1146,280 @@ impl RemoteAccessSession {
 
         self.stop_video_tracks(&removed.last_video_unsubscribed);
 
-        if !removed.client_channels.is_empty() {
-            if let Some((listener, client_id)) = self.listener.as_ref().zip(removed.client_id) {
-                let client = Client::new(client_id, participant_id.clone());
-                for descriptor in &removed.client_channels {
-                    listener.on_client_unadvertise(client.clone(), descriptor);
+        if !removed.last_param_unsubscribed.is_empty() {
+            if let Some(listener) = &self.listener {
+                listener.on_parameters_unsubscribe(removed.last_param_unsubscribed);
+            }
+        }
+
+        if let Some((listener, client_id)) = self.listener.as_ref().zip(removed.client_id) {
+            let client = Client::new(client_id, participant_id.clone());
+
+            for descriptor in &removed.subscribed_descriptors {
+                listener.on_unsubscribe(client.clone(), descriptor);
+            }
+
+            for descriptor in &removed.client_channels {
+                listener.on_client_unadvertise(client.clone(), descriptor);
+            }
+        }
+    }
+
+    /// Listen for room events and dispatch them.
+    ///
+    /// Returns when the room is disconnected or the event stream ends.
+    pub(crate) async fn handle_room_events(
+        self: &Arc<Self>,
+        mut room_events: tokio::sync::mpsc::UnboundedReceiver<RoomEvent>,
+        server_info: ServerInfo,
+    ) {
+        let remote_access_session_id = self.remote_access_session_id();
+        while let Some(event) = room_events.recv().await {
+            match event {
+                RoomEvent::ParticipantConnected(participant) => {
+                    let participant_identity = participant.identity();
+                    info!(
+                        remote_access_session_id,
+                        participant_identity = %participant_identity,
+                        "participant connected to room"
+                    );
+                    if let Err(e) = self
+                        .add_participant(participant.identity(), server_info.clone())
+                        .await
+                    {
+                        error!(remote_access_session_id, error = %e, "failed to add participant: {e}");
+                        continue;
+                    }
+                }
+                RoomEvent::ParticipantDisconnected(participant) => {
+                    info!(
+                        remote_access_session_id,
+                        participant_identity = %participant.identity(),
+                        "participant disconnected from room"
+                    );
+                    self.remove_participant(&participant.identity());
+                }
+                RoomEvent::DataReceived {
+                    payload: _,
+                    topic,
+                    kind: _,
+                    participant: _,
+                } => {
+                    info!(remote_access_session_id, "data received: {:?}", topic);
+                }
+                RoomEvent::ByteStreamOpened {
+                    reader,
+                    topic,
+                    participant_identity,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        participant_identity = %participant_identity,
+                        topic = %topic,
+                        "byte stream opened from participant"
+                    );
+                    if let Some(reader) = reader.take() {
+                        if topic == CONTROL_CHANNEL_TOPIC {
+                            let session = self.clone();
+                            tokio::spawn(async move {
+                                session
+                                    .handle_byte_stream_from_client(
+                                        participant_identity,
+                                        reader,
+                                        None,
+                                    )
+                                    .await;
+                            });
+                        } else if let Some(id_str) = topic.strip_prefix(CLIENT_CHANNEL_TOPIC_PREFIX)
+                        {
+                            if let Ok(id) = id_str.parse::<u64>() {
+                                self.handle_client_channel_stream(
+                                    participant_identity,
+                                    ChannelId::new(id),
+                                    reader,
+                                );
+                            } else {
+                                warn!(
+                                    "invalid channel id in topic {:?} from {:?}",
+                                    topic, participant_identity
+                                );
+                            }
+                        } else {
+                            warn!(
+                                "ignoring unexpected byte stream topic from {:?}: {:?}",
+                                participant_identity, topic
+                            );
+                        }
+                    }
+                }
+                RoomEvent::ConnectionStateChanged(state) => {
+                    info!(
+                        remote_access_session_id,
+                        state = ?state,
+                        "connection state changed"
+                    );
+                }
+                RoomEvent::Reconnecting => {
+                    info!(remote_access_session_id, "reconnecting to room");
+                }
+                RoomEvent::Reconnected => {
+                    info!(remote_access_session_id, "reconnected to room");
+                }
+                RoomEvent::ConnectionQualityChanged {
+                    quality,
+                    participant,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        participant = %participant.identity(),
+                        quality = ?quality,
+                        "connection quality changed"
+                    );
+                }
+                RoomEvent::TrackSubscriptionFailed {
+                    participant,
+                    error,
+                    track_sid,
+                } => {
+                    warn!(
+                        remote_access_session_id,
+                        participant = %participant.identity(),
+                        track_sid = %track_sid,
+                        error = %error,
+                        "track subscription failed: {error}"
+                    );
+                }
+                RoomEvent::LocalTrackPublished {
+                    publication,
+                    track: _,
+                    participant: _,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        track_sid = %publication.sid(),
+                        track_name = %publication.name(),
+                        "local track published"
+                    );
+                }
+                RoomEvent::LocalTrackUnpublished {
+                    publication,
+                    participant: _,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        track_sid = %publication.sid(),
+                        track_name = %publication.name(),
+                        "local track unpublished"
+                    );
+                }
+                RoomEvent::TrackSubscribed {
+                    track: _,
+                    publication,
+                    participant,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        participant = %participant.identity(),
+                        track_sid = %publication.sid(),
+                        track_name = %publication.name(),
+                        "remote track subscribed"
+                    );
+                }
+                RoomEvent::TrackUnsubscribed {
+                    track: _,
+                    publication,
+                    participant,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        participant = %participant.identity(),
+                        track_sid = %publication.sid(),
+                        track_name = %publication.name(),
+                        "remote track unsubscribed"
+                    );
+                }
+                RoomEvent::TrackMuted {
+                    participant,
+                    publication,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        participant = %participant.identity(),
+                        track_sid = %publication.sid(),
+                        track_name = %publication.name(),
+                        "track muted"
+                    );
+                }
+                RoomEvent::TrackUnmuted {
+                    participant,
+                    publication,
+                } => {
+                    info!(
+                        remote_access_session_id,
+                        participant = %participant.identity(),
+                        track_sid = %publication.sid(),
+                        track_name = %publication.name(),
+                        "track unmuted"
+                    );
+                }
+                RoomEvent::Disconnected { reason } => {
+                    info!(
+                        remote_access_session_id,
+                        reason = reason.as_str_name(),
+                        "disconnected from room, will attempt to reconnect"
+                    );
+                    return;
+                }
+                _ => {
+                    debug!(remote_access_session_id, "room event: {:?}", event);
                 }
             }
+        }
+        warn!(
+            remote_access_session_id,
+            "stopped listening for room events"
+        );
+    }
+
+    /// Periodically logs session statistics for monitoring and debugging.
+    pub(crate) async fn log_periodic_stats(&self) {
+        let remote_access_session_id = self.remote_access_session_id();
+        let period = Duration::from_secs(30);
+        let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let stats = self.stats();
+            let connection_quality = self.room.local_participant().connection_quality();
+            let total_video_bytes_sent = match self.room.get_stats().await {
+                Ok(stats) => Some(
+                    stats
+                        .publisher_stats
+                        .iter()
+                        .filter_map(|s| match s {
+                            libwebrtc::stats::RtcStats::OutboundRtp(rtp)
+                                if rtp.stream.kind == "video" =>
+                            {
+                                Some(rtp.sent.bytes_sent)
+                            }
+                            _ => None,
+                        })
+                        .sum::<u64>(),
+                ),
+                Err(e) => {
+                    warn!(remote_access_session_id, error = %e, "failed to get room stats: {e}");
+                    None
+                }
+            };
+            info!(
+                remote_access_session_id,
+                participants = stats.participants,
+                subscriptions = stats.subscriptions,
+                video_tracks = stats.video_tracks,
+                total_video_bytes_sent,
+                connection_quality = ?connection_quality,
+                "periodic stats"
+            );
         }
     }
 
@@ -807,8 +1442,268 @@ impl RemoteAccessSession {
             return;
         };
 
-        let framed = frame_text_message(advertise_msg.to_string().as_bytes());
-        self.send_control(participant, framed);
+        self.send_control(participant, encode_json_message(&advertise_msg));
+    }
+
+    /// Enqueue service advertisements for delivery to a single participant.
+    fn send_service_advertisements(&self, participant: Arc<Participant>) {
+        let services: Vec<_> = self.services.read().values().cloned().collect();
+        if let Some(msg) = build_advertise_services_msg(&services) {
+            self.send_control(participant, encode_json_message(&msg));
+        }
+    }
+
+    /// Broadcasts service advertisements for the given service IDs to all connected participants.
+    pub(crate) fn advertise_new_services(&self, service_ids: &[ServiceId]) {
+        let services: Vec<_> = {
+            let services = self.services.read();
+            service_ids
+                .iter()
+                .filter_map(|id| services.get_by_id(*id))
+                .collect()
+        };
+        if let Some(msg) = build_advertise_services_msg(&services) {
+            self.broadcast_control(encode_json_message(&msg));
+        }
+    }
+
+    /// Broadcasts service unadvertisements for the given service IDs to all connected participants.
+    pub(crate) fn unadvertise_services(&self, service_ids: &[ServiceId]) {
+        let msg = UnadvertiseServices::new(service_ids.iter().copied().map(u32::from));
+        self.broadcast_control(encode_json_message(&msg));
+    }
+
+    /// Handle a service call request from a client.
+    fn handle_service_call(&self, participant: &Arc<Participant>, req: client::ServiceCallRequest) {
+        let service_id = ServiceId::new(req.service_id);
+        let call_id = CallId::new(req.call_id);
+
+        if !self.has_capability(Capability::Services) {
+            self.send_service_call_failure(
+                participant,
+                service_id,
+                call_id,
+                "Server does not support services",
+            );
+            return;
+        }
+
+        // Lookup the requested service handler.
+        let Some(service) = self.services.read().get_by_id(service_id) else {
+            self.send_service_call_failure(participant, service_id, call_id, "Unknown service");
+            return;
+        };
+
+        // If this service declared a request encoding, ensure that it matches. Otherwise, ensure
+        // that the request encoding is in the server's global list of supported encodings.
+        if !service
+            .request_encoding()
+            .map(|e| e == req.encoding.as_ref())
+            .unwrap_or_else(|| self.supported_encodings.contains(req.encoding.as_ref()))
+        {
+            self.send_service_call_failure(
+                participant,
+                service_id,
+                call_id,
+                "Unsupported encoding",
+            );
+            return;
+        }
+
+        // Acquire the semaphore, or reject if there are too many concurrent requests.
+        let Some(guard) = participant.service_call_sem().try_acquire() else {
+            self.send_service_call_failure(participant, service_id, call_id, "Too many requests");
+            return;
+        };
+
+        let encoding = service
+            .response_encoding()
+            .unwrap_or(req.encoding.as_ref())
+            .to_string();
+
+        let responder = super::service::new_responder(
+            participant.clone(),
+            service_id,
+            call_id,
+            encoding,
+            self.control_plane_tx.clone(),
+            guard,
+        );
+        let request = crate::remote_common::service::Request::new(
+            service.clone(),
+            participant.client_id(),
+            call_id,
+            req.encoding.into_owned(),
+            req.payload.into_owned().into(),
+        );
+
+        service.call(request, responder);
+    }
+
+    /// Sends a service call failure message to a participant.
+    fn send_service_call_failure(
+        &self,
+        participant: &Arc<Participant>,
+        service_id: ServiceId,
+        call_id: CallId,
+        message: &str,
+    ) {
+        let failure = ServiceCallFailure {
+            service_id: service_id.into(),
+            call_id: call_id.into(),
+            message: message.to_string(),
+        };
+        self.send_control(participant.clone(), encode_json_message(&failure));
+    }
+
+    /// Handle a `GetParameters` request from a client.
+    fn handle_get_parameters(
+        &self,
+        participant: &Arc<Participant>,
+        param_names: Vec<String>,
+        request_id: Option<String>,
+    ) {
+        if !self.has_capability(Capability::Parameters) {
+            self.send_error(
+                participant,
+                "Server does not support parameters capability".into(),
+            );
+            return;
+        }
+
+        if let Some(listener) = self.listener.as_ref() {
+            let client = Client::new(
+                participant.client_id(),
+                participant.participant_id().clone(),
+            );
+            let parameters = listener.on_get_parameters(client, param_names, request_id.as_deref());
+            self.send_parameter_values(participant, parameters, request_id);
+        }
+    }
+
+    /// Handle a `SetParameters` request from a client.
+    fn handle_set_parameters(
+        &self,
+        participant: &Arc<Participant>,
+        parameters: Vec<Parameter>,
+        request_id: Option<String>,
+    ) {
+        if !self.has_capability(Capability::Parameters) {
+            self.send_error(
+                participant,
+                "Server does not support parameters capability".into(),
+            );
+            return;
+        }
+
+        let updated_parameters = if let Some(listener) = self.listener.as_ref() {
+            let client = Client::new(
+                participant.client_id(),
+                participant.participant_id().clone(),
+            );
+            let updated = listener.on_set_parameters(client, parameters, request_id.as_deref());
+
+            // Send the updated parameters back to the requesting client if `request_id` is set.
+            if request_id.is_some() {
+                self.send_parameter_values(participant, updated.clone(), request_id);
+            }
+            updated
+        } else {
+            parameters
+        };
+        self.publish_parameter_values(updated_parameters);
+    }
+
+    /// Handle a `SubscribeParameterUpdates` request from a client.
+    fn handle_subscribe_parameter_updates(
+        &self,
+        participant: &Arc<Participant>,
+        names: Vec<String>,
+    ) {
+        if !self.has_capability(Capability::Parameters) {
+            self.send_error(
+                participant,
+                "Server does not support parametersSubscribe capability".into(),
+            );
+            return;
+        }
+        let _guard = self.subscription_lock.lock();
+        let new_names = self
+            .state
+            .write()
+            .subscribe_parameters(participant.participant_id(), names);
+        if !new_names.is_empty() {
+            if let Some(listener) = &self.listener {
+                listener.on_parameters_subscribe(new_names);
+            }
+        }
+    }
+
+    /// Handle an `UnsubscribeParameterUpdates` request from a client.
+    fn handle_unsubscribe_parameter_updates(
+        &self,
+        participant: &Arc<Participant>,
+        names: Vec<String>,
+    ) {
+        if !self.has_capability(Capability::Parameters) {
+            self.send_error(
+                participant,
+                "Server does not support parametersSubscribe capability".into(),
+            );
+            return;
+        }
+        let _guard = self.subscription_lock.lock();
+        let old_names = self
+            .state
+            .write()
+            .unsubscribe_parameters(participant.participant_id(), names);
+        if !old_names.is_empty() {
+            if let Some(listener) = &self.listener {
+                listener.on_parameters_unsubscribe(old_names);
+            }
+        }
+    }
+
+    /// Send a `ParameterValues` message to a specific participant.
+    fn send_parameter_values(
+        &self,
+        participant: &Arc<Participant>,
+        parameters: Vec<Parameter>,
+        request_id: Option<String>,
+    ) {
+        let mut msg = ParameterValues::new(parameters.into_iter().filter(|p| p.value.is_some()));
+        if let Some(id) = request_id {
+            msg = msg.with_id(id);
+        }
+        self.send_control(participant.clone(), encode_json_message(&msg));
+    }
+
+    /// Publish parameter values to all participants subscribed to those parameters.
+    pub(crate) fn publish_parameter_values(&self, parameters: Vec<Parameter>) {
+        if !self.has_capability(Capability::Parameters) {
+            error!("Server does not support parameters capability");
+            return;
+        }
+
+        let state = self.state.read();
+        let participants = state.collect_participants();
+        for participant in &participants {
+            // Filter parameters by this participant's subscriptions.
+            let filtered: Vec<_> = parameters
+                .iter()
+                .filter(|p| {
+                    state
+                        .parameter_subscribers(&p.name)
+                        .is_some_and(|ids| ids.contains(participant.participant_id()))
+                })
+                .cloned()
+                .collect();
+
+            if !filtered.is_empty() {
+                let no_request_id = None;
+                self.send_parameter_values(participant, filtered, no_request_id);
+            }
+        }
     }
 
     /// Check video publishers for metadata changes and re-advertise affected channels.
@@ -862,8 +1757,7 @@ impl RemoteAccessSession {
         };
 
         if let Some(Some(msg)) = advertise_msg {
-            let framed = frame_text_message(msg.to_string().as_bytes());
-            self.broadcast_control(framed);
+            self.broadcast_control(encode_json_message(&msg));
         }
     }
 
