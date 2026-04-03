@@ -7,7 +7,7 @@ use foxglove::{
     ChannelDescriptor,
     bytes::Bytes,
     messages::{CameraCalibration, RawImage, Timestamp},
-    remote_access::{Capability, Client, Gateway, Listener},
+    remote_access::{Capability, Client, ConnectionStatus, Gateway, Listener},
 };
 use serde_json::Value;
 use std::{
@@ -17,11 +17,47 @@ use std::{
 
 struct MessageHandler;
 impl Listener for MessageHandler {
+    fn on_connection_status_changed(&self, status: ConnectionStatus) {
+        tracing::info!("Connection status changed: {status}");
+    }
+
     /// Called when a connected app publishes a message, such as from the Teleop panel.
     fn on_message_data(&self, client: Client, channel: &ChannelDescriptor, message: &[u8]) {
         let json = serde_json::from_slice::<Value>(message).expect("Failed to parse message");
-        println!(
+        tracing::info!(
             "Teleop message from {} on topic {}: {json}",
+            client.id(),
+            channel.topic()
+        );
+    }
+
+    fn on_subscribe(&self, client: Client, channel: &ChannelDescriptor) {
+        tracing::info!(
+            "Client {} subscribed to channel: {}",
+            client.id(),
+            channel.topic()
+        );
+    }
+
+    fn on_unsubscribe(&self, client: Client, channel: &ChannelDescriptor) {
+        tracing::info!(
+            "Client {} unsubscribed from channel: {}",
+            client.id(),
+            channel.topic()
+        );
+    }
+
+    fn on_client_advertise(&self, client: Client, channel: &ChannelDescriptor) {
+        tracing::info!(
+            "Client {} advertised channel: {}",
+            client.id(),
+            channel.topic()
+        );
+    }
+
+    fn on_client_unadvertise(&self, client: Client, channel: &ChannelDescriptor) {
+        tracing::info!(
+            "Client {} unadvertised channel: {}",
             client.id(),
             channel.topic()
         );

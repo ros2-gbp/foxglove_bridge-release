@@ -93,6 +93,10 @@ enum class WebSocketServerStatusLevel : uint8_t {
 inline WebSocketServerCapabilities operator|(
   WebSocketServerCapabilities a, WebSocketServerCapabilities b
 ) {
+  // We have to disable the EnumCastOutOfRange check here since the current version of
+  // clang-analyzer doesn't yet support exempting enums marked as bitflags. See:
+  // https://github.com/llvm/llvm-project/issues/76208
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
   return WebSocketServerCapabilities(uint8_t(a) | uint8_t(b));
 }
 
@@ -326,10 +330,10 @@ public:
   /// This method will fail for various reasons, with the following error codes:
   ///
   /// - `DuplicateService`: A service with the same name is already registered.
-  /// - `MissingRequestedEncoding`: The service didn't declare a request
+  /// - `MissingRequestEncoding`: The service didn't declare a request
   ///   encoding, and the server was not configured with a global list of
   ///   supported encodings.
-  /// - `ServicesNotSupported`: The server was not convfigured with the
+  /// - `ServicesNotSupported`: The server was not configured with the
   ///   `Services` capability.
   ///
   /// @param service The service to add.

@@ -174,6 +174,31 @@ pub struct CompressedImage {
     #[prost(string, tag = "3")]
     pub format: ::prost::alloc::string::String,
 }
+/// A compressed point cloud. A decoder for `format` must decompress `data`, using metadata stored in the compressed payload to recover point positions and any additional per-point attributes. The decoded point cloud must include at least 2 coordinate fields from `x`, `y`, and `z`; `red`, `green`, `blue`, and `alpha` are optional for customizing each point's color.
+///
+/// <https://docs.foxglove.dev/docs/visualization/message-schemas/compressed-point-cloud>
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CompressedPointCloud {
+    /// Timestamp of point cloud
+    #[prost(message, optional, tag = "1")]
+    pub timestamp: ::core::option::Option<crate::messages::Timestamp>,
+    /// Frame of reference
+    #[prost(string, tag = "2")]
+    pub frame_id: ::prost::alloc::string::String,
+    /// The origin of the point cloud relative to the frame of reference
+    #[prost(message, optional, tag = "3")]
+    pub pose: ::core::option::Option<Pose>,
+    /// Compressed point cloud data for exactly one point cloud, including any format-specific metadata needed to describe the decoded point attributes.
+    #[prost(bytes = "bytes", tag = "4")]
+    #[cfg_attr(feature = "serde", serde(with = "crate::messages::serde_bytes"))]
+    pub data: ::prost::bytes::Bytes,
+    /// Point cloud compression format.
+    ///
+    /// Supported values: `draco` ([Google Draco](<https://google.github.io/draco/>)).
+    #[prost(string, tag = "5")]
+    pub format: ::prost::alloc::string::String,
+}
 /// A single frame of a compressed video bitstream
 ///
 /// <https://docs.foxglove.dev/docs/visualization/message-schemas/compressed-video>
@@ -595,6 +620,12 @@ pub struct LocationFix {
         serde(with = "serde_enum::location_fix_position_covariance_type")
     )]
     pub position_covariance_type: i32,
+    /// Heading (yaw angle), in radians, measured clockwise from north
+    #[prost(double, optional, tag = "10")]
+    pub heading: ::core::option::Option<f64>,
+    /// Velocity in local East-North-Up (ENU) frame in m/s
+    #[prost(message, optional, tag = "11")]
+    pub velocity: ::core::option::Option<Velocity3>,
     /// Color used to visualize the location
     #[prost(message, optional, tag = "8")]
     pub color: ::core::option::Option<Color>,
@@ -1148,6 +1179,15 @@ pub struct RawImage {
     ///    - Pixel channel values are represented as unsigned 8-bit integers.
     ///    - U and V values are shared between horizontal pairs of pixels. Each pair of output pixels is encoded as \[Y1, U, Y2, V\].
     ///    - `step` must be greater than or equal to `width` * 2.
+    /// - `nv12`:
+    ///    - Pixel colors are decomposed into [Y'UV](<https://en.wikipedia.org/wiki/Y%E2%80%B2UV>) channels using 4:2:0 chroma subsampling. The data is stored in [NV12](<https://www.kernel.org/doc/html/v4.10/media/uapi/v4l/pixfmt-nv12.html>) semi-planar layout with two contiguous planes: a Y (luma) plane followed by an interleaved UV (chroma) plane.
+    ///    - All channel values are represented as unsigned 8-bit integers.
+    ///    - Both planes use `step` as their row stride.
+    ///    - The Y plane contains one luma value per pixel (`step` * `height` bytes).
+    ///    - The UV plane contains interleaved U, V chroma pairs, subsampled by a factor of 2 in both dimensions (`width`/2 pairs per row, `height`/2 rows, `step` * `height`/2 bytes). Each U, V pair is shared by a 2x2 block of pixels.
+    ///    - `width` and `height` must be even.
+    ///    - `step` must be greater than or equal to `width`.
+    ///    - Total `data` length is `step` * `height` * 3/2 bytes.
     /// - `rgb8`:
     ///    - Pixel colors are decomposed into Red, Green, and Blue channels.
     ///    - Pixel channel values are represented as unsigned 8-bit integers.
@@ -1175,7 +1215,7 @@ pub struct RawImage {
     ///    - Pixel colors are decomposed into Red, Blue and Green channels.
     ///    - Pixel channel values are represented as unsigned 8-bit integers, and serialized in a 2x2 bayer filter pattern.
     ///    - The order of the four letters after `bayer_` determine the layout, so for `bayer_wxyz8` the pattern is:
-    ///    ```plaintext
+    ///    ```text
     ///    w | x
     ///    - + -
     ///    y | z
@@ -1435,6 +1475,22 @@ pub struct Vector3 {
     #[prost(double, tag = "2")]
     pub y: f64,
     /// z coordinate length
+    #[prost(double, tag = "3")]
+    pub z: f64,
+}
+/// A velocity vector in 3D space
+///
+/// <https://docs.foxglove.dev/docs/visualization/message-schemas/velocity3>
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct Velocity3 {
+    /// x component
+    #[prost(double, tag = "1")]
+    pub x: f64,
+    /// y component
+    #[prost(double, tag = "2")]
+    pub y: f64,
+    /// z component
     #[prost(double, tag = "3")]
     pub z: f64,
 }

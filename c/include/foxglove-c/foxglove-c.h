@@ -715,6 +715,35 @@ typedef struct foxglove_compressed_image {
 } foxglove_compressed_image;
 
 /**
+ * A compressed point cloud. A decoder for `format` must decompress `data`, using metadata stored in the compressed payload to recover point positions and any additional per-point attributes. The decoded point cloud must include at least 2 coordinate fields from `x`, `y`, and `z`; `red`, `green`, `blue`, and `alpha` are optional for customizing each point's color.
+ */
+typedef struct foxglove_compressed_point_cloud {
+  /**
+   * Timestamp of point cloud
+   */
+  const struct foxglove_timestamp *timestamp;
+  /**
+   * Frame of reference
+   */
+  struct foxglove_string frame_id;
+  /**
+   * The origin of the point cloud relative to the frame of reference
+   */
+  const struct foxglove_pose *pose;
+  /**
+   * Compressed point cloud data for exactly one point cloud, including any format-specific metadata needed to describe the decoded point attributes.
+   */
+  const unsigned char *data;
+  size_t data_len;
+  /**
+   * Point cloud compression format.
+   *
+   * Supported values: `draco` ([Google Draco](https://google.github.io/draco/)).
+   */
+  struct foxglove_string format;
+} foxglove_compressed_point_cloud;
+
+/**
  * A single frame of a compressed video bitstream
  */
 typedef struct foxglove_compressed_video {
@@ -1283,6 +1312,24 @@ typedef struct foxglove_line_primitive {
 } foxglove_line_primitive;
 
 /**
+ * A velocity vector in 3D space
+ */
+typedef struct foxglove_velocity3 {
+  /**
+   * x component
+   */
+  double x;
+  /**
+   * y component
+   */
+  double y;
+  /**
+   * z component
+   */
+  double z;
+} foxglove_velocity3;
+
+/**
  * A navigation satellite fix for any Global Navigation Satellite System
  */
 typedef struct foxglove_location_fix {
@@ -1314,6 +1361,14 @@ typedef struct foxglove_location_fix {
    * If `position_covariance` is available, `position_covariance_type` must be set to indicate the type of covariance.
    */
   foxglove_position_covariance_type position_covariance_type;
+  /**
+   * Heading (yaw angle), in radians, measured clockwise from north
+   */
+  const double *heading;
+  /**
+   * Velocity in local East-North-Up (ENU) frame in m/s
+   */
+  const struct foxglove_velocity3 *velocity;
   /**
    * Color used to visualize the location
    */
@@ -1759,6 +1814,15 @@ typedef struct foxglove_raw_image {
    *   - Pixel channel values are represented as unsigned 8-bit integers.
    *   - U and V values are shared between horizontal pairs of pixels. Each pair of output pixels is encoded as [Y1, U, Y2, V].
    *   - `step` must be greater than or equal to `width` * 2.
+   * - `nv12`:
+   *   - Pixel colors are decomposed into [Y'UV](https://en.wikipedia.org/wiki/Y%E2%80%B2UV) channels using 4:2:0 chroma subsampling. The data is stored in [NV12](https://www.kernel.org/doc/html/v4.10/media/uapi/v4l/pixfmt-nv12.html) semi-planar layout with two contiguous planes: a Y (luma) plane followed by an interleaved UV (chroma) plane.
+   *   - All channel values are represented as unsigned 8-bit integers.
+   *   - Both planes use `step` as their row stride.
+   *   - The Y plane contains one luma value per pixel (`step` * `height` bytes).
+   *   - The UV plane contains interleaved U, V chroma pairs, subsampled by a factor of 2 in both dimensions (`width`/2 pairs per row, `height`/2 rows, `step` * `height`/2 bytes). Each U, V pair is shared by a 2x2 block of pixels.
+   *   - `width` and `height` must be even.
+   *   - `step` must be greater than or equal to `width`.
+   *   - Total `data` length is `step` * `height` * 3/2 bytes.
    * - `rgb8`:
    *   - Pixel colors are decomposed into Red, Green, and Blue channels.
    *   - Pixel channel values are represented as unsigned 8-bit integers.
@@ -1786,7 +1850,7 @@ typedef struct foxglove_raw_image {
    *   - Pixel colors are decomposed into Red, Blue and Green channels.
    *   - Pixel channel values are represented as unsigned 8-bit integers, and serialized in a 2x2 bayer filter pattern.
    *   - The order of the four letters after `bayer_` determine the layout, so for `bayer_wxyz8` the pattern is:
-   *   ```plaintext
+   *   ```text
    *   w | x
    *   - + -
    *   y | z
@@ -2742,6 +2806,52 @@ foxglove_error foxglove_compressed_image_encode(const struct foxglove_compressed
                                                 uint8_t *ptr,
                                                 size_t len,
                                                 size_t *encoded_len);
+
+/**
+ * Create a new typed channel, and return an owned raw channel pointer to it.
+ *
+ * # Safety
+ * We're trusting the caller that the channel will only be used with this type T.
+ */
+foxglove_error foxglove_channel_create_compressed_point_cloud(struct foxglove_string topic,
+                                                              const struct foxglove_context *context,
+                                                              const struct foxglove_channel **channel);
+
+#if !defined(__wasm__)
+/**
+ * Log a CompressedPointCloud message to a channel.
+ *
+ * # Safety
+ * The channel must have been created for this type with foxglove_channel_create_compressed_point_cloud.
+ */
+foxglove_error foxglove_channel_log_compressed_point_cloud(const struct foxglove_channel *channel,
+                                                           const struct foxglove_compressed_point_cloud *msg,
+                                                           const uint64_t *log_time,
+                                                           FoxgloveSinkId sink_id);
+#endif
+
+/**
+ * Get the CompressedPointCloud schema.
+ *
+ * All buffers in the returned schema are statically allocated.
+ */
+struct foxglove_schema foxglove_compressed_point_cloud_schema(void);
+
+/**
+ * Encode a CompressedPointCloud message as protobuf to the buffer provided.
+ *
+ * On success, writes the encoded length to *encoded_len.
+ * If the provided buffer has insufficient capacity, writes the required capacity to *encoded_len and
+ * returns FOXGLOVE_ERROR_BUFFER_TOO_SHORT.
+ * If the message cannot be encoded, logs the reason to stderr and returns FOXGLOVE_ERROR_ENCODE.
+ *
+ * # Safety
+ * ptr must be a valid pointer to a memory region at least len bytes long.
+ */
+foxglove_error foxglove_compressed_point_cloud_encode(const struct foxglove_compressed_point_cloud *msg,
+                                                      uint8_t *ptr,
+                                                      size_t len,
+                                                      size_t *encoded_len);
 
 /**
  * Create a new typed channel, and return an owned raw channel pointer to it.
@@ -4537,6 +4647,52 @@ foxglove_error foxglove_vector3_encode(const struct foxglove_vector3 *msg,
                                        size_t len,
                                        size_t *encoded_len);
 
+/**
+ * Create a new typed channel, and return an owned raw channel pointer to it.
+ *
+ * # Safety
+ * We're trusting the caller that the channel will only be used with this type T.
+ */
+foxglove_error foxglove_channel_create_velocity3(struct foxglove_string topic,
+                                                 const struct foxglove_context *context,
+                                                 const struct foxglove_channel **channel);
+
+#if !defined(__wasm__)
+/**
+ * Log a Velocity3 message to a channel.
+ *
+ * # Safety
+ * The channel must have been created for this type with foxglove_channel_create_velocity3.
+ */
+foxglove_error foxglove_channel_log_velocity3(const struct foxglove_channel *channel,
+                                              const struct foxglove_velocity3 *msg,
+                                              const uint64_t *log_time,
+                                              FoxgloveSinkId sink_id);
+#endif
+
+/**
+ * Get the Velocity3 schema.
+ *
+ * All buffers in the returned schema are statically allocated.
+ */
+struct foxglove_schema foxglove_velocity3_schema(void);
+
+/**
+ * Encode a Velocity3 message as protobuf to the buffer provided.
+ *
+ * On success, writes the encoded length to *encoded_len.
+ * If the provided buffer has insufficient capacity, writes the required capacity to *encoded_len and
+ * returns FOXGLOVE_ERROR_BUFFER_TOO_SHORT.
+ * If the message cannot be encoded, logs the reason to stderr and returns FOXGLOVE_ERROR_ENCODE.
+ *
+ * # Safety
+ * ptr must be a valid pointer to a memory region at least len bytes long.
+ */
+foxglove_error foxglove_velocity3_encode(const struct foxglove_velocity3 *msg,
+                                         uint8_t *ptr,
+                                         size_t len,
+                                         size_t *encoded_len);
+
 #if !defined(__wasm__)
 /**
  * Returns a `FoxgloveMcapOptions` with defaults matching `mcap::WriteOptions::default()`.
@@ -5512,6 +5668,10 @@ foxglove_error foxglove_server_clear_session(const struct foxglove_websocket_ser
 #if !defined(__wasm__)
 /**
  * Adds a service to the server.
+ *
+ * This function will fail if the server was not configured with the `services` capability,
+ * if a service with the same name is already registered, or if the service has no request
+ * encoding and the server has no supported encodings.
  *
  * # Safety
  * - `server` must be a valid pointer to a server started with `foxglove_server_start`.

@@ -1,21 +1,23 @@
-//! Integration tests that validate the ws-protocol byte stream framing, channel
+//! Integration tests that validate the byte stream framing, channel
 //! advertisements, subscriptions, and message delivery using a local LiveKit dev server.
 //!
 //! Requires a local LiveKit server via `docker compose up -d`.
 //! Run with: `cargo test -p remote_access_tests -- --ignored livekit_`
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use foxglove::messages::{RawImage, Timestamp};
 use foxglove::protocol::v2::client::SubscribeChannel;
 use foxglove::protocol::v2::server::ServerMessage;
+use foxglove::remote_access::ConnectionStatus;
 use foxglove::{Encode, Schema};
 use livekit::{Room, RoomOptions};
 use remote_access_tests::livekit_token;
 use remote_access_tests::mock_listener::MockListener;
 use remote_access_tests::test_helpers::{
-    ClientChannelDesc, TestGateway, TestGatewayOptions, ViewerConnection, poll_until,
+    ClientChannelDesc, EVENT_TIMEOUT, TestGateway, TestGatewayOptions, ViewerConnection, poll_until,
 };
 use serial_test::serial;
 use tracing::info;
@@ -95,7 +97,8 @@ async fn livekit_viewer_receives_channel_advertisement() -> Result<()> {
 }
 
 /// Test the full subscribe-and-receive-data flow: after subscribing to a channel
-/// the viewer receives MessageData when the SDK logs to that channel.
+/// the viewer receives multiple sequential MessageData frames on the same
+/// per-channel byte stream.
 #[traced_test]
 #[ignore]
 #[tokio::test]
@@ -118,15 +121,34 @@ async fn livekit_viewer_receives_message_after_subscribe() -> Result<()> {
     // Subscribe to the channel.
     viewer.subscribe_and_wait(&[channel_id], &channel).await?;
 
-    // Log a message.
-    let payload = b"hello world";
-    channel.log(payload);
+    let payloads: &[&[u8]] = &[b"message-1", b"message-2", b"message-3"];
 
-    // Expect to receive the message.
-    let msg_data = viewer.expect_new_bytestream_and_message_data().await?;
-    assert_eq!(msg_data.channel_id, channel_id);
-    assert_eq!(msg_data.data.as_ref(), payload);
-    info!("MessageData validated: channel_id={channel_id}");
+    // Log the first message and wait for the per-channel byte stream to open.
+    channel.log(payloads[0]);
+    let mut ch_reader = viewer.expect_channel_byte_stream().await?;
+    let msg = ch_reader.next_server_message().await?;
+    match msg {
+        ServerMessage::MessageData(data) => {
+            assert_eq!(data.channel_id, channel_id);
+            assert_eq!(data.data.as_ref(), payloads[0]);
+        }
+        other => anyhow::bail!("expected MessageData, got: {other:?}"),
+    }
+    info!("received message 1/{}", payloads.len());
+
+    // Log remaining messages and read them from the same byte stream.
+    for (i, &payload) in payloads[1..].iter().enumerate() {
+        channel.log(payload);
+        let msg = ch_reader.next_server_message().await?;
+        match msg {
+            ServerMessage::MessageData(data) => {
+                assert_eq!(data.channel_id, channel_id);
+                assert_eq!(data.data.as_ref(), payload);
+            }
+            other => anyhow::bail!("expected MessageData, got: {other:?}"),
+        }
+        info!("received message {}/{}", i + 2, payloads.len());
+    }
 
     viewer.close().await?;
     gw.stop().await?;
@@ -628,7 +650,7 @@ async fn livekit_existing_participant_receives_server_info_and_advertisement() -
 }
 
 /// Test that subscribing to a video-capable channel WITHOUT requestVideoTrack delivers
-/// data via the ws-protocol data plane (MessageData frames) instead of a video track.
+/// data via the device-ch data plane (MessageData frames) instead of a video track.
 #[traced_test]
 #[ignore]
 #[tokio::test]
@@ -1046,5 +1068,485 @@ async fn livekit_client_disconnect_fires_unadvertise_for_advertised_channels() -
     info!("disconnect unadvertise validated: {unadvertised:?}");
 
     gw.stop().await?;
+    Ok(())
+}
+
+// ===========================================================================
+// Subscribe / unsubscribe listener callback tests
+// ===========================================================================
+
+/// Test that subscribing to a channel fires `on_subscribe` on the listener.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_subscribe_fires_listener_callback() -> Result<()> {
+    use std::sync::Arc;
+    let ctx = foxglove::Context::new();
+    let listener = Arc::new(MockListener::default());
+
+    let channel = ctx
+        .channel_builder("/camera")
+        .message_encoding("json")
+        .build_raw()
+        .context("create channel")?;
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(listener.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+    let advertise = viewer.expect_advertise().await?;
+    let channel_id = advertise.channels[0].id;
+
+    viewer.send_subscribe(&[channel_id]).await?;
+    poll_until(|| listener.subscribed().len() == 1).await;
+
+    let subscribed = listener.subscribed();
+    assert_eq!(subscribed.len(), 1);
+    assert_eq!(subscribed[0].0, "viewer-1");
+    assert_eq!(subscribed[0].1, "/camera");
+    info!("on_subscribe callback validated: {:?}", subscribed[0]);
+
+    viewer.close().await?;
+    // Wait for disconnect unsubscribe before stopping.
+    poll_until(|| listener.unsubscribed().len() == 1).await;
+    let _ = channel;
+    gw.stop().await?;
+    Ok(())
+}
+
+/// Test that unsubscribing from a channel fires `on_unsubscribe` on the listener.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_unsubscribe_fires_listener_callback() -> Result<()> {
+    use std::sync::Arc;
+    let ctx = foxglove::Context::new();
+    let listener = Arc::new(MockListener::default());
+
+    let channel = ctx
+        .channel_builder("/lidar")
+        .message_encoding("json")
+        .build_raw()
+        .context("create channel")?;
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(listener.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+    let advertise = viewer.expect_advertise().await?;
+    let channel_id = advertise.channels[0].id;
+
+    // Subscribe first, then unsubscribe.
+    viewer.subscribe_and_wait(&[channel_id], &channel).await?;
+    poll_until(|| listener.subscribed().len() == 1).await;
+
+    viewer.send_unsubscribe(&[channel_id]).await?;
+    poll_until(|| listener.unsubscribed().len() == 1).await;
+
+    let unsubscribed = listener.unsubscribed();
+    assert_eq!(unsubscribed.len(), 1);
+    assert_eq!(unsubscribed[0].0, "viewer-1");
+    assert_eq!(unsubscribed[0].1, "/lidar");
+    info!("on_unsubscribe callback validated: {:?}", unsubscribed[0]);
+
+    viewer.close().await?;
+    let _ = channel;
+    gw.stop().await?;
+    Ok(())
+}
+
+/// Test that disconnecting fires `on_unsubscribe` for all subscribed channels.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_disconnect_fires_unsubscribe_for_subscribed_channels() -> Result<()> {
+    use std::sync::Arc;
+    let ctx = foxglove::Context::new();
+    let listener = Arc::new(MockListener::default());
+
+    let channel = ctx
+        .channel_builder("/imu")
+        .message_encoding("json")
+        .build_raw()
+        .context("create channel")?;
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(listener.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+    let advertise = viewer.expect_advertise().await?;
+    let channel_id = advertise.channels[0].id;
+
+    viewer.subscribe_and_wait(&[channel_id], &channel).await?;
+    poll_until(|| listener.subscribed().len() == 1).await;
+
+    // Disconnect — should fire on_unsubscribe for the subscribed channel.
+    viewer.close().await?;
+    poll_until(|| listener.unsubscribed().len() == 1).await;
+
+    let unsubscribed = listener.unsubscribed();
+    assert_eq!(unsubscribed.len(), 1);
+    assert_eq!(unsubscribed[0].0, "viewer-1");
+    assert_eq!(unsubscribed[0].1, "/imu");
+    info!(
+        "disconnect on_unsubscribe callback validated: {:?}",
+        unsubscribed[0]
+    );
+
+    let _ = channel;
+    gw.stop().await?;
+    Ok(())
+}
+
+// ===========================================================================
+// Client publish / message data tests
+// ===========================================================================
+
+/// Test that sending a client MessageData on the client-ch-{channelId} stream
+/// fires `on_message_data` on the listener with the correct client, topic, and payload.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_client_message_data_fires_listener_callback() -> Result<()> {
+    use std::sync::Arc;
+    let ctx = foxglove::Context::new();
+    let listener = Arc::new(MockListener::default());
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(listener.clone()),
+            capabilities: vec![foxglove::remote_access::Capability::ClientPublish],
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+
+    viewer
+        .send_client_advertise(&[ClientChannelDesc {
+            id: 1,
+            topic: "/cmd".to_string(),
+            encoding: "json".to_string(),
+        }])
+        .await?;
+    poll_until(|| listener.advertised().len() == 1).await;
+
+    let payload = b"{\"velocity\": 1.0}";
+    viewer.send_client_message_data(1, payload).await?;
+
+    poll_until(|| listener.message_data().len() == 1).await;
+
+    let messages = listener.message_data();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].0, "viewer-1", "client id should match");
+    assert_eq!(messages[0].1, "/cmd", "topic should match");
+    assert_eq!(messages[0].2, payload, "payload should match");
+    info!("on_message_data callback validated via per-channel stream");
+
+    viewer.close().await?;
+    gw.stop().await?;
+    Ok(())
+}
+
+/// Test that sending MessageData before the Client Advertise still delivers the
+/// message once the advertise arrives (the server holds the byte stream until then).
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_client_message_data_before_advertise_is_delivered() -> Result<()> {
+    use std::sync::Arc;
+    let ctx = foxglove::Context::new();
+    let listener = Arc::new(MockListener::default());
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(listener.clone()),
+            capabilities: vec![foxglove::remote_access::Capability::ClientPublish],
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+
+    let payload = b"early data";
+    viewer.send_client_message_data(1, payload).await?;
+
+    // Brief pause to make it likely the data stream arrives before the advertise.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    viewer
+        .send_client_advertise(&[ClientChannelDesc {
+            id: 1,
+            topic: "/cmd".to_string(),
+            encoding: "json".to_string(),
+        }])
+        .await?;
+
+    poll_until(|| listener.message_data().len() == 1).await;
+
+    let messages = listener.message_data();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].0, "viewer-1", "client id should match");
+    assert_eq!(messages[0].1, "/cmd", "topic should match");
+    assert_eq!(messages[0].2, payload, "payload should match");
+    info!("message data delivered after late advertise");
+
+    viewer.close().await?;
+    gw.stop().await?;
+    Ok(())
+}
+
+/// Test that sending MessageData for a channel the client has not advertised produces an error.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_client_message_data_for_unadvertised_channel_sends_error() -> Result<()> {
+    use std::sync::Arc;
+    let ctx = foxglove::Context::new();
+    let listener = Arc::new(MockListener::default());
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(listener.clone()),
+            capabilities: vec![foxglove::remote_access::Capability::ClientPublish],
+            pending_client_reader_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+
+    // Send MessageData for channel 999, which was never advertised by the client.
+    // The server stashes the byte stream waiting for a matching Client Advertise.
+    // With pending_client_reader_timeout set to 1s, the error arrives quickly.
+    let payload = b"rogue data";
+    viewer.send_client_message_data(999, payload).await?;
+
+    let deadline = tokio::time::Instant::now() + EVENT_TIMEOUT;
+    let status = loop {
+        let msg = tokio::time::timeout_at(deadline, viewer.frame_reader.next_server_message())
+            .await
+            .context("timeout waiting for error status")?
+            .context("failed to read server message")?;
+        if let ServerMessage::Status(s) = msg {
+            break s;
+        }
+    };
+
+    assert_eq!(
+        status.level,
+        foxglove::protocol::v2::server::status::Level::Error
+    );
+    assert!(
+        status.message.contains("not advertised channel"),
+        "unexpected status message: {}",
+        status.message
+    );
+    info!("error status received: {}", status.message);
+
+    // The listener should never have been called.
+    assert!(
+        listener.message_data().is_empty(),
+        "listener should not receive message data for unadvertised channel"
+    );
+
+    viewer.close().await?;
+    gw.stop().await?;
+    Ok(())
+}
+
+/// Test that sending client advertisement when the gateway does not have the `ClientPublish`
+/// capability results in a Status error message.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_client_message_advertise_without_capability_sends_error() -> Result<()> {
+    let ctx = foxglove::Context::new();
+
+    let gw = TestGateway::start(&ctx).await?;
+
+    let mut viewer = ViewerConnection::connect(&gw.room_name, "viewer-1").await?;
+    let _server_info = viewer.expect_server_info().await?;
+
+    viewer
+        .send_client_advertise(&[ClientChannelDesc {
+            id: 1,
+            topic: "/cmd".to_string(),
+            encoding: "json".to_string(),
+        }])
+        .await?;
+
+    let deadline = tokio::time::Instant::now() + EVENT_TIMEOUT;
+    let status = loop {
+        let msg = tokio::time::timeout_at(deadline, viewer.frame_reader.next_server_message())
+            .await
+            .context("timeout waiting for error status")?
+            .context("failed to read server message")?;
+        if let ServerMessage::Status(s) = msg {
+            break s;
+        }
+    };
+
+    assert_eq!(
+        status.level,
+        foxglove::protocol::v2::server::status::Level::Error
+    );
+    info!("error status received: {}", status.message);
+
+    viewer.close().await?;
+    gw.stop().await?;
+    Ok(())
+}
+
+/// Test that connection status transitions occur in the correct order
+/// (Connecting -> Connected -> ShuttingDown -> Shutdown) and that no
+/// listener callbacks fire after Shutdown.
+#[traced_test]
+#[ignore]
+#[tokio::test]
+#[serial(livekit)]
+async fn livekit_connection_status_lifecycle() -> Result<()> {
+    struct StatusTracker {
+        statuses: Mutex<Vec<ConnectionStatus>>,
+        callback_after_shutdown: Mutex<bool>,
+    }
+
+    impl foxglove::remote_access::Listener for StatusTracker {
+        fn on_connection_status_changed(&self, status: ConnectionStatus) {
+            let mut statuses = self.statuses.lock().unwrap();
+            statuses.push(status);
+        }
+
+        fn on_subscribe(
+            &self,
+            _client: foxglove::remote_access::Client,
+            _channel: &foxglove::ChannelDescriptor,
+        ) {
+            let statuses = self.statuses.lock().unwrap();
+            if statuses.last() == Some(&ConnectionStatus::Shutdown) {
+                *self.callback_after_shutdown.lock().unwrap() = true;
+            }
+        }
+
+        fn on_message_data(
+            &self,
+            _client: foxglove::remote_access::Client,
+            _channel: &foxglove::ChannelDescriptor,
+            _payload: &[u8],
+        ) {
+            let statuses = self.statuses.lock().unwrap();
+            if statuses.last() == Some(&ConnectionStatus::Shutdown) {
+                *self.callback_after_shutdown.lock().unwrap() = true;
+            }
+        }
+    }
+
+    let tracker = Arc::new(StatusTracker {
+        statuses: Mutex::new(Vec::new()),
+        callback_after_shutdown: Mutex::new(false),
+    });
+
+    let ctx = foxglove::Context::new();
+
+    // Create a channel so we can verify subscribe callbacks.
+    let channel = ctx
+        .channel_builder("/status-test")
+        .message_encoding("json")
+        .build_raw()
+        .context("create channel")?;
+
+    let gw = TestGateway::start_with_options(
+        &ctx,
+        TestGatewayOptions {
+            listener: Some(tracker.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    // Wait for Connected status.
+    poll_until(|| {
+        tracker
+            .statuses
+            .lock()
+            .unwrap()
+            .contains(&ConnectionStatus::Connected)
+    })
+    .await;
+    assert_eq!(gw.handle.connection_status(), ConnectionStatus::Connected);
+
+    // Connect a viewer and subscribe to trigger a listener callback while connected.
+    let viewer = ViewerConnection::connect(&gw.room_name, "viewer-status").await?;
+    viewer
+        .subscribe_and_wait(&[u64::from(channel.id())], &channel)
+        .await?;
+
+    // Disconnect the viewer before stopping.
+    viewer.close().await?;
+
+    // Stop the gateway and wait for full shutdown.
+    let runner = gw.handle.stop();
+    tokio::time::timeout(remote_access_tests::test_helpers::SHUTDOWN_TIMEOUT, runner)
+        .await
+        .context("timeout waiting for gateway to stop")?
+        .context("gateway runner panicked")?;
+
+    // Validate status transitions.
+    let statuses = tracker.statuses.lock().unwrap().clone();
+    info!("recorded status transitions: {statuses:?}");
+
+    assert_eq!(
+        statuses,
+        vec![
+            ConnectionStatus::Connecting,
+            ConnectionStatus::Connected,
+            ConnectionStatus::ShuttingDown,
+            ConnectionStatus::Shutdown,
+        ],
+    );
+
+    // Verify no callbacks fired after Shutdown.
+    assert!(
+        !*tracker.callback_after_shutdown.lock().unwrap(),
+        "listener callback fired after Shutdown"
+    );
+
     Ok(())
 }

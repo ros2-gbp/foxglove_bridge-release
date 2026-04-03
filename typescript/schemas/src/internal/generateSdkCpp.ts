@@ -36,9 +36,19 @@ function primitiveDefaultValue(type: FoxglovePrimitive) {
 
 function formatComment(comment: string, indent: number) {
   const spaces = " ".repeat(indent);
+  let inCodeBlock = false;
   return comment
     .split("\n")
-    .map((line) => `${spaces}/// @brief ${line}`)
+    .map((rawLine, i) => {
+      let line = rawLine;
+      if (line.trimStart().startsWith("```")) {
+        if (!inCodeBlock && line.trimStart() === "```") {
+          line = line.replace("```", "```text");
+        }
+        inCodeBlock = !inCodeBlock;
+      }
+      return i === 0 ? `${spaces}/// @brief ${line}` : `${spaces}/// ${line}`;
+    })
     .join("\n");
 }
 
@@ -157,11 +167,16 @@ export function generateHppSchemas(
           }
           if (typeof field.array === "number") {
             fieldType = `std::array<${fieldType}, ${field.array}>`;
+            // std::array has no user-provided default constructor; explicit
+            // init required for clang-tidy cppcoreguidelines-pro-type-member-init.
+            defaultStr = " = {}";
           } else if (field.array) {
             fieldType = `std::vector<${fieldType}>`;
           } else if (field.optional || field.type.type === "nested") {
             fieldType = `std::optional<${fieldType}>`;
-            if (field.optional && defaultStr !== "") {
+            // Override any inner-type default (e.g. uint32_t's `= 0`) so the
+            // optional defaults to disengaged rather than engaged-with-default.
+            if (defaultStr !== "") {
               defaultStr = " = std::nullopt";
             }
           }
