@@ -2,8 +2,10 @@
 // Options: {}
 
 import { Color } from "./Color";
+import { KeyValuePair } from "./KeyValuePair";
 import { PositionCovarianceType } from "./PositionCovarianceType";
 import { Time } from "./Time";
+import { Velocity3 } from "./Velocity3";
 
 /** A navigation satellite fix for any Global Navigation Satellite System */
 export type LocationFix = {
@@ -28,6 +30,15 @@ export type LocationFix = {
   /** If `position_covariance` is available, `position_covariance_type` must be set to indicate the type of covariance. */
   position_covariance_type: PositionCovarianceType;
 
+  /** Heading (yaw angle), in radians, measured clockwise from north */
+  heading?: number;
+
+  /** Velocity in local East-North-Up (ENU) frame in m/s */
+  velocity?: Velocity3;
+
   /** Color used to visualize the location */
-  color: Color;
+  color?: Color;
+
+  /** Additional user-provided metadata associated with the location fix. Keys must be unique. */
+  metadata?: KeyValuePair[];
 };

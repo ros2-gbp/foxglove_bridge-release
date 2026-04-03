@@ -1,6 +1,6 @@
 IMAGE_NAME=foxglove-sdk
 CONTAINER_MAKEFILE=Container.mk
-MSRV_RUST_VERSION=1.83.0
+MSRV_RUST_VERSION=1.85.0
 
 .PHONY: default
 default: build-rust
@@ -25,6 +25,7 @@ $(TARGETS): image
 	docker run -v $(shell pwd):/app \
 		-e CARGO_HOME=/app/.cargo \
 		-e UV_CACHE_DIR=/app/.uv_cache \
+		-e PYTHON_REMOTE_ACCESS \
 		-t $(IMAGE_NAME) \
 		make -f $(CONTAINER_MAKEFILE) \
 		MSRV_RUST_VERSION=$(MSRV_RUST_VERSION) \

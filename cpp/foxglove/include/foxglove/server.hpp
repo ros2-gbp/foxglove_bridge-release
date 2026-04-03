@@ -44,7 +44,7 @@ struct ClientChannel {
 /// @brief A client connected to the server.
 struct ClientMetadata {
   /// @brief The ID of the client.
-  uint32_t id;
+  uint32_t id{};
   /// @brief The sink ID associated with the client.
   std::optional<uint64_t> sink_id;
 };
@@ -54,6 +54,8 @@ struct ClientMetadata {
 /// A server may advertise certain capabilities to clients and provide related functionality
 /// in WebSocketServerCallbacks.
 enum class WebSocketServerCapabilities : uint8_t {
+  /// No capabilities.
+  None = 0,
   /// Allow clients to advertise channels to send data messages to the server.
   ClientPublish = 1 << 0,
   /// Allow clients to subscribe and make connection graph updates
@@ -71,11 +73,10 @@ enum class WebSocketServerCapabilities : uint8_t {
   /// Allow clients to request assets. If you supply an asset handler to the
   /// server, this capability will be advertised automatically.
   Assets = 1 << 5,
-  /// @cond foxglove_internal
-  /// Indicates that the server is sending data within a fixed time range. This requires the
-  /// server to specify the `playback_time_range` field in its `WebSocketServerOptions`.
-  RangedPlayback = 1 << 6,
-  /// @endcond
+  /// Indicates that the server is capable of responding to playback control requests from
+  /// controls in the Foxglove app. This requires the server to specify the `playback_time_range`
+  /// field in its `WebSocketServerOptions`.
+  PlaybackControl = 1 << 6,
 };
 
 /// @brief Level indicator for a server status message.
@@ -92,6 +93,10 @@ enum class WebSocketServerStatusLevel : uint8_t {
 inline WebSocketServerCapabilities operator|(
   WebSocketServerCapabilities a, WebSocketServerCapabilities b
 ) {
+  // We have to disable the EnumCastOutOfRange check here since the current version of
+  // clang-analyzer doesn't yet support exempting enums marked as bitflags. See:
+  // https://github.com/llvm/llvm-project/issues/76208
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
   return WebSocketServerCapabilities(uint8_t(a) | uint8_t(b));
 }
 
@@ -197,10 +202,9 @@ struct WebSocketServerCallbacks {
 
   /// @brief Callback invoked when a client disconnects from the server.
   std::function<void()> onClientDisconnect;
-  /// @cond foxglove_internal
   /// @brief Callback invoked when a playback control request is sent from the client.
   ///
-  /// Requires the capability WebSocketServerCapabilities::RangedPlayback
+  /// Requires the capability WebSocketServerCapabilities::PlaybackControl
   ///
   /// @param playback_control_request The playback control request.
   /// @return The playback state to send back to the client.
@@ -211,7 +215,6 @@ struct WebSocketServerCallbacks {
   std::function<std::optional<PlaybackState>(const PlaybackControlRequest& playback_control_request
   )>
     onPlaybackControlRequest;
-  /// @endcond
 };
 
 /// @cond foxglove_internal
@@ -239,7 +242,7 @@ struct WebSocketServerOptions {
   /// @brief The callbacks of the server.
   WebSocketServerCallbacks callbacks;
   /// @brief The capabilities of the server.
-  WebSocketServerCapabilities capabilities = WebSocketServerCapabilities(0);
+  WebSocketServerCapabilities capabilities = WebSocketServerCapabilities::None;
   /// @brief The supported encodings of the server.
   std::vector<std::string> supported_encodings;
   /// @brief An optional session ID for the server.
@@ -264,13 +267,11 @@ struct WebSocketServerOptions {
   std::optional<std::map<std::string, std::string>> server_info = std::nullopt;
   /// @endcond
 
-  /// @cond foxglove_internal
   /// @brief The time range for playback. This applies if the server is playing back a fixed time
   /// range of data.
   ///
-  /// @note Setting this option imples the RangedPlayback capability
+  /// @note Setting this option implies the PlaybackControl capability
   std::optional<std::pair<uint64_t, uint64_t>> playback_time_range = std::nullopt;
-  /// @endcond
 };
 
 /// @brief A WebSocket server for visualization in Foxglove.
@@ -303,14 +304,12 @@ public:
   /// @param timestamp_nanos An epoch offset in nanoseconds.
   void broadcastTime(uint64_t timestamp_nanos) const noexcept;
 
-  /// @cond foxglove_internal
   /// @brief Publishes the current playback state to all clients.
   ///
-  /// Requires the capability WebSocketServerCapabilities::RangedPlayback.
+  /// Requires the capability WebSocketServerCapabilities::PlaybackControl.
   ///
   /// @param playback_state The playback state to publish.
   void broadcastPlaybackState(const PlaybackState& playback_state) const noexcept;
-  /// @endcond
 
   /// @brief Sets a new session ID and notifies all clients, causing them to
   /// reset their state.
@@ -331,10 +330,10 @@ public:
   /// This method will fail for various reasons, with the following error codes:
   ///
   /// - `DuplicateService`: A service with the same name is already registered.
-  /// - `MissingRequestedEncoding`: The service didn't declare a request
+  /// - `MissingRequestEncoding`: The service didn't declare a request
   ///   encoding, and the server was not configured with a global list of
   ///   supported encodings.
-  /// - `ServicesNotSupported`: The server was not convfigured with the
+  /// - `ServicesNotSupported`: The server was not configured with the
   ///   `Services` capability.
   ///
   /// @param service The service to add.
