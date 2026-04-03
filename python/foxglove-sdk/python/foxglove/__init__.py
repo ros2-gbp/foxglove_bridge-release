@@ -1,8 +1,8 @@
 """
 This module provides interfaces for logging messages to Foxglove.
 
-See :py:mod:`foxglove.schemas` and :py:mod:`foxglove.channels` for working with well-known Foxglove
-schemas.
+See :py:mod:`foxglove.messages` and :py:mod:`foxglove.channels` for working with well-known Foxglove
+message types.
 """
 
 from __future__ import annotations
@@ -33,10 +33,6 @@ atexit.register(_foxglove.shutdown)
 
 
 try:
-    from ._foxglove_py.cloud import CloudSink
-
-    # from ._foxglove_py.cloud import start_cloud_sink as _start_cloud_sink
-    from .cloud import CloudSinkListener
     from .websocket import (
         AssetHandler,
         Capability,
@@ -81,7 +77,7 @@ try:
             Return `True` to log the channel, or `False` to skip it. By default, all channels
             will be logged.
         :param playback_time_range: Time range of data being played back, in absolute nanoseconds.
-            Implies `Capability.RangedPlayback` if set.
+            Implies `Capability.PlaybackControl` if set.
         """
         return _foxglove.start_server(
             name=name,
@@ -98,32 +94,64 @@ try:
             playback_time_range=playback_time_range,
         )
 
-    def start_cloud_sink(
+except ImportError:
+    pass
+
+
+try:
+    from .remote_access import Capability as RemoteAccessCapability
+    from .remote_access import (
+        RemoteAccessGateway,
+        RemoteAccessListener,
+    )
+
+    def start_gateway(
         *,
-        listener: CloudSinkListener | None = None,
+        name: str | None = None,
+        device_token: str | None = None,
+        capabilities: list[RemoteAccessCapability] | None = None,
+        listener: RemoteAccessListener | None = None,
         supported_encodings: list[str] | None = None,
+        services: list[Service] | None = None,
         context: Context | None = None,
-        session_id: str | None = None,
-    ) -> CloudSink:
+        channel_filter: SinkChannelFilter | None = None,
+        message_backlog_size: int | None = None,
+        foxglove_api_url: str | None = None,
+        foxglove_api_timeout: float | None = None,
+    ) -> RemoteAccessGateway:
         """
-        Connect to Foxglove Agent for live visualization and teleop.
+        Start a remote access gateway for live visualization and teleop in Foxglove.
 
-        Foxglove Agent must be running on the same host for this to work.
-
-        :param capabilities: A list of capabilities to advertise to the agent.
+        :param name: The name of the server. If not set, the device name from the Foxglove
+            platform is used.
+        :param device_token: The device token for authenticating with the Foxglove platform.
+            If not set, the ``FOXGLOVE_DEVICE_TOKEN`` environment variable is used.
+        :param capabilities: A list of capabilities to advertise to clients.
         :param listener: A Python object that implements the
-            :py:class:`cloud.CloudSinkListener` protocol.
-        :param supported_encodings: A list of encodings to advertise to the agent.
+            :py:class:`remote_access.RemoteAccessListener` protocol.
+        :param supported_encodings: A list of encodings to advertise to clients.
+        :param services: A list of services to advertise to clients.
         :param context: The context to use for logging. If None, the global context is used.
-        :param session_id: An ID which allows the agent to understand if the connection is a
-            re-connection or a new connection instance. If None, then an ID is generated based on
-            the current time.
+        :param channel_filter: A ``Callable`` that determines whether a channel should be logged
+            to. Return ``True`` to log the channel, or ``False`` to skip it. By default, all
+            channels will be logged.
+        :param message_backlog_size: The maximum number of messages to buffer before dropping
+            the oldest entries. Defaults to 1024.
+        :param foxglove_api_url: Override the Foxglove API base URL.
+        :param foxglove_api_timeout: Timeout for Foxglove API requests, in seconds.
         """
-        return _foxglove.start_cloud_sink(
+        return _foxglove.start_gateway(
+            name=name,
+            device_token=device_token,
+            capabilities=capabilities,
             listener=listener,
             supported_encodings=supported_encodings,
+            services=services,
             context=context,
-            session_id=session_id,
+            channel_filter=channel_filter,
+            message_backlog_size=message_backlog_size,
+            foxglove_api_url=foxglove_api_url,
+            foxglove_api_timeout=foxglove_api_timeout,
         )
 
 except ImportError:
@@ -194,22 +222,25 @@ def init_notebook_buffer(context: Context | None = None) -> NotebookBuffer:
     :raises Exception: If the notebook extra package is not installed. Install it with ``pip install
         foxglove-sdk[notebook]``.
 
-    :note: This function is only available when the `notebook` extra package is installed. Install
+    :note: This function is only available when the ``notebook`` extra package is installed. Install
         it with ``pip install foxglove-sdk[notebook]``.
 
     Example:
-        >>> import foxglove
-        >>>
-        >>> # Create a basic viewer using the default context
-        >>> nb_buffer = foxglove.init_notebook_buffer()
-        >>>
-        >>> # Or use a specific context
-        >>> nb_buffer = foxglove.init_notebook_buffer(context=my_ctx)
-        >>>
-        >>> # ... log data as usual ...
-        >>>
-        >>> # Display the widget in the notebook
-        >>> nb_buffer.show()
+
+    .. code-block:: python
+
+        import foxglove
+
+        # Create a basic viewer using the default context
+        nb_buffer = foxglove.init_notebook_buffer()
+
+        # Or use a specific context
+        nb_buffer = foxglove.init_notebook_buffer(context=my_ctx)
+
+        # ... log data as usual ...
+
+        # Display the widget in the notebook
+        nb_buffer.show()
     """
     try:
         from .notebook.notebook_buffer import NotebookBuffer
@@ -230,12 +261,10 @@ __all__ = [
     "MCAPWriter",
     "Schema",
     "SinkChannelFilter",
-    "CloudSink",
-    "CloudSinkListener",
-    "start_cloud_sink",
     "log",
     "open_mcap",
     "set_log_level",
+    "start_gateway",
     "start_server",
     "init_notebook_buffer",
 ]
