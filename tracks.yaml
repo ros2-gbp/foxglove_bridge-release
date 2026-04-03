@@ -41,11 +41,11 @@ tracks:
     - git-bloom-generate -y rosrpm --prefix release/:{ros_distro} :{ros_distro} -i
       :{release_inc} --os-name rhel
     devel_branch: main
-    last_release: ros-v3.2.5
-    last_version: 3.2.5
+    last_release: ros-v3.2.6
+    last_version: 3.2.6
     name: foxglove-sdk
     patches: null
-    release_inc: '2'
+    release_inc: '1'
     release_repo_url: null
     release_tag: ros-v:{version}
     ros_distro: humble
