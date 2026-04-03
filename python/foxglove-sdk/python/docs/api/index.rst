@@ -3,43 +3,21 @@ API Reference
 
 Version: |release|
 
-.. note::
-   The notebook integration classes and functions are only available when the `notebook` extra package is installed.
-   Install it with `pip install foxglove-sdk[notebook]`.
-
 foxglove
 --------
 
 .. automodule:: foxglove
    :members:
-   :exclude-members: CloudSink, CloudSinkListener, MCAPWriter, init_notebook_buffer, start_cloud_sink
-
-Notebook Integration
-^^^^^^^^^^^^^^^^^^^^
-
-Functions and classes for integrating with Jupyter notebooks and creating interactive visualizations.
-
-.. autofunction:: init_notebook_buffer
-
-Notebook Classes
-^^^^^^^^^^^^^^^^
-
-.. autoclass:: foxglove.notebook.notebook_buffer.NotebookBuffer
-   :members:
-   :exclude-members: __init__
-
-.. autoclass:: foxglove.notebook.foxglove_widget.FoxgloveWidget
-   :members:
-   :exclude-members: __init__
+   :exclude-members: CloudSink, CloudSinkListener, MCAPWriter, init_notebook_buffer, start_cloud_sink, start_gateway, RemoteAccessCapability, RemoteAccessGateway, RemoteAccessListener, RemoteAccessConnectionStatus
 
 
-Schemas
-^^^^^^^
+Message Types
+^^^^^^^^^^^^^
 
 .. toctree::
    :maxdepth: 1
 
-   ./schemas
+   ./messages
 
 
 Channels
@@ -142,7 +120,7 @@ foxglove.websocket
 .. Parameter types and values are manually documented since nested classes (values) are not supported by automodule.
 .. automodule:: foxglove.websocket
    :members:
-   :exclude-members: Capability, ParameterType, ParameterValue, StatusLevel, PlaybackCommand, PlaybackControlRequest, PlaybackState, PlaybackStatus
+   :exclude-members: Capability, ParameterType, ParameterValue, StatusLevel, PlaybackCommand, PlaybackStatus
 
 
 Enums
@@ -175,6 +153,11 @@ Enums
       server publishes time data, then timestamps of published messages must originate from the
       same time source.
 
+   .. py:data:: PlaybackControl
+
+      Indicates that the server is capable of responding to playback control requests from
+      controls in the Foxglove app.
+
 
 .. py:enum:: StatusLevel
 
@@ -183,3 +166,41 @@ Enums
    .. py:data:: Info
    .. py:data:: Warning
    .. py:data:: Error
+
+Playback control
+^^^^^^^^^^^^^^^^
+
+Used with the playback control feature during live visualization. Requires the
+:py:data:`Capability.PlaybackControl` capability.
+
+.. py:enum:: PlaybackCommand
+
+   The command for playback requested by the client player.
+
+   .. py:data:: Play
+
+      Start or continue playback.
+
+   .. py:data:: Pause
+
+      Pause playback.
+
+.. py:enum:: PlaybackStatus
+
+   The status of server data playback.
+
+   .. py:data:: Playing
+
+      Playing at the requested playback speed.
+
+   .. py:data:: Paused
+
+      Playback paused.
+
+   .. py:data:: Buffering
+
+      Server is not yet playing back data because it is performing a prerequisite required operation.
+
+   .. py:data:: Ended
+
+      The end of the available data has been reached.

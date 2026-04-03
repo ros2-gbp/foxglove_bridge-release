@@ -1,13 +1,13 @@
 use foxglove::ChannelDescriptor;
 use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
-use pyo3::{types::PyDict, Py};
+use pyo3::{Py, types::PyDict};
 
 use crate::PySchema;
 
 /// Information about a Channel.
 #[pyclass(name = "ChannelDescriptor", module = "foxglove")]
-pub struct PyChannelDescriptor(ChannelDescriptor);
+pub struct PyChannelDescriptor(pub(crate) ChannelDescriptor);
 
 #[pymethods]
 impl PyChannelDescriptor {

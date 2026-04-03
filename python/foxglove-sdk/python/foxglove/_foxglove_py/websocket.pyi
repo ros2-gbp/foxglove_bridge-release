@@ -27,8 +27,8 @@ class Capability(Enum):
     Time = ...
     """Inform clients about the latest server time."""
 
-    RangedPlayback = ...
-    """Indicates that the server is sending data within a fixed time range."""
+    PlaybackControl = ...
+    """Indicates that the server is capable of responding to playback control requests from controls in the Foxglove app."""
 
 class Client:
     """
@@ -378,7 +378,13 @@ class WebSocketServer:
         ...
 
     def add_services(self, services: list[Service]) -> None:
-        """Add services to the server."""
+        """
+        Add services to the server.
+
+        This method will fail if the server was not configured with
+        :py:attr:`Capability.Services`, if a service name is not unique, or if a service has no
+        request encoding and the server has no supported encodings.
+        """
         ...
 
     def remove_services(self, names: list[str]) -> None:
