@@ -1,0 +1,12 @@
+Source: ros-lyrical-foxglove-bridge
+Section: misc
+Priority: optional
+Maintainer: Foxglove <ros-tooling+foxglove_bridge@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), libasio-dev, libssl-dev <!nocheck>, libwebsocketpp-dev <!nocheck>, nlohmann-json3-dev, ros-lyrical-ament-cmake, ros-lyrical-ament-cmake-gtest <!nocheck>, ros-lyrical-ament-index-cpp, ros-lyrical-ament-lint-auto <!nocheck>, ros-lyrical-geometry-msgs, ros-lyrical-rclcpp, ros-lyrical-rclcpp-components, ros-lyrical-resource-retriever, ros-lyrical-ros-environment, ros-lyrical-rosgraph-msgs, ros-lyrical-rosx-introspection, ros-lyrical-sensor-msgs, ros-lyrical-std-msgs, ros-lyrical-std-msgs <!nocheck>, ros-lyrical-std-srvs <!nocheck>, ros-lyrical-ros-workspace
+Homepage: https://github.com/foxglove/foxglove-sdk
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-foxglove-bridge
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-ament-index-cpp, ros-lyrical-rclcpp, ros-lyrical-rclcpp-components, ros-lyrical-resource-retriever, ros-lyrical-rosgraph-msgs, ros-lyrical-rosx-introspection, ros-lyrical-std-msgs, ros-lyrical-ros-workspace
+Description: ROS Foxglove Bridge
