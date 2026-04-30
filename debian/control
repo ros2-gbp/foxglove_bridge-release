@@ -1,0 +1,12 @@
+Source: ros-lyrical-foxglove-msgs
+Section: misc
+Priority: optional
+Maintainer: Foxglove <ros-tooling@foxglove.dev>
+Build-Depends: debhelper (>= 9.0.0), ros-lyrical-ament-cmake, ros-lyrical-ament-cmake-pytest <!nocheck>, ros-lyrical-ament-lint-auto <!nocheck>, ros-lyrical-ament-lint-common <!nocheck>, ros-lyrical-builtin-interfaces, ros-lyrical-geometry-msgs, ros-lyrical-ros-environment, ros-lyrical-rosidl-default-generators, ros-lyrical-ros-workspace, ros-lyrical-rosidl-typesupport-fastrtps-c, ros-lyrical-rosidl-typesupport-fastrtps-cpp
+Homepage: https://foxglove.dev/
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-foxglove-msgs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-builtin-interfaces, ros-lyrical-geometry-msgs, ros-lyrical-rosidl-default-runtime, ros-lyrical-ros-workspace
+Description: foxglove_msgs provides visualization messages that are supported by Foxglove.
