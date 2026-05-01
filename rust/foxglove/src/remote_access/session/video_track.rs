@@ -37,7 +37,7 @@ pub enum VideoInputSchema {
 /// Detect the video input schema from an (encoding, schema_name) pair.
 ///
 /// Returns `Some(InputSchema)` if the channel carries an image type we can transcode to video.
-pub fn detect_video_schema(encoding: &str, schema_name: &str) -> Option<VideoInputSchema> {
+fn detect_video_schema(encoding: &str, schema_name: &str) -> Option<VideoInputSchema> {
     match (encoding, schema_name) {
         ("protobuf", "foxglove.CompressedImage") => Some(VideoInputSchema::FoxgloveCompressedImage),
         ("protobuf", "foxglove.RawImage") => Some(VideoInputSchema::FoxgloveRawImage),
@@ -66,9 +66,9 @@ pub fn get_video_input_schema(channel: &RawChannel) -> Option<VideoInputSchema> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VideoMetadata {
     /// The image encoding (pixel format or compression codec).
-    pub encoding: ImageEncoding,
+    pub(crate) encoding: ImageEncoding,
     /// The coordinate frame ID of the image source (e.g. `"camera_optical_frame"`).
-    pub frame_id: String,
+    pub(crate) frame_id: String,
 }
 
 /// Newtype wrapping [`I420Buffer`] that implements [`Yuv420Buffer`].
@@ -166,12 +166,6 @@ impl VideoPublisher {
         }
     }
 
-    /// Returns a reference to the underlying video source.
-    #[allow(dead_code)]
-    pub fn video_source(&self) -> &NativeVideoSource {
-        &self.video_source
-    }
-
     /// Returns the latest video metadata observed by this publisher, if any.
     pub fn metadata(&self) -> arc_swap::Guard<Option<Arc<VideoMetadata>>> {
         self.metadata.load()
@@ -246,6 +240,7 @@ fn transcode_and_publish(
     let frame = VideoFrame {
         rotation: VideoRotation::VideoRotation0,
         timestamp_us: (timestamp_ns / 1000) as i64,
+        frame_metadata: None,
         buffer: buffer.0,
     };
     video_source.capture_frame(&frame);
