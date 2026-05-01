@@ -517,7 +517,7 @@ class LocationFix:
         position_covariance: list[float] | None = None,
         position_covariance_type: LocationFixPositionCovarianceType = LocationFixPositionCovarianceType.Unknown,
         heading: float | None = None,
-        velocity: Velocity3 | None = None,
+        velocity: Vector3 | None = None,
         color: Color | None = None,
         metadata: list[KeyValuePair] | None = None,
     ) -> None: ...
@@ -592,6 +592,33 @@ class ModelPrimitive:
 
     def encode(self) -> bytes:
         """Encodes the ModelPrimitive."""
+        ...
+
+class Odometry:
+    """
+    An estimate of position, orientation, and velocity for an object or reference frame in 3D space
+    """
+
+    def __init__(
+        self,
+        *,
+        timestamp: Timestamp | None = None,
+        frame_id: str = "",
+        body_frame_id: str = "",
+        pose: Pose | None = None,
+        linear_velocity: Vector3 | None = None,
+        angular_velocity: Vector3 | None = None,
+        pose_covariance: list[float] | None = None,
+        velocity_covariance: list[float] | None = None,
+        metadata: list[KeyValuePair] | None = None,
+    ) -> None: ...
+    @staticmethod
+    def get_schema() -> Schema:
+        """Returns the Odometry schema"""
+        ...
+
+    def encode(self) -> bytes:
+        """Encodes the Odometry."""
         ...
 
 class PackedElementField:
@@ -1036,21 +1063,6 @@ class Vector3:
         """Encodes the Vector3."""
         ...
 
-class Velocity3:
-    """
-    A velocity vector in 3D space
-    """
-
-    def __init__(self, *, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> None: ...
-    @staticmethod
-    def get_schema() -> Schema:
-        """Returns the Velocity3 schema"""
-        ...
-
-    def encode(self) -> bytes:
-        """Encodes the Velocity3."""
-        ...
-
 class VoxelGrid:
     """
     A 3D grid of data
@@ -1108,6 +1120,7 @@ FoxgloveMessage = Union[
     SceneEntity,
     SceneUpdate,
     ModelPrimitive,
+    Odometry,
     PackedElementField,
     Point2,
     Point3,
@@ -1126,5 +1139,4 @@ FoxgloveMessage = Union[
     TriangleListPrimitive,
     Vector2,
     Vector3,
-    Velocity3,
 ]
