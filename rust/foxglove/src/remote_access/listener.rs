@@ -13,21 +13,22 @@ pub trait Listener: Send + Sync {
     /// Callback invoked when the gateway connection status changes.
     fn on_connection_status_changed(&self, _status: ConnectionStatus) {}
     /// Callback invoked when a client message is received.
-    fn on_message_data(&self, _client: Client, _channel: &ChannelDescriptor, _payload: &[u8]) {}
+    fn on_message_data(&self, _client: &Client, _channel: &ChannelDescriptor, _payload: &[u8]) {}
     /// Callback invoked when a client subscribes to a channel.
-    fn on_subscribe(&self, _client: Client, _channel: &ChannelDescriptor) {}
+    fn on_subscribe(&self, _client: &Client, _channel: &ChannelDescriptor) {}
     /// Callback invoked when a client unsubscribes from a channel or disconnects.
-    fn on_unsubscribe(&self, _client: Client, _channel: &ChannelDescriptor) {}
+    /// Also invoked when a subscribed channel is removed from the [`Context`][crate::Context].
+    fn on_unsubscribe(&self, _client: &Client, _channel: &ChannelDescriptor) {}
     /// Callback invoked when a client advertises a client channel.
-    fn on_client_advertise(&self, _client: Client, _channel: &ChannelDescriptor) {}
+    fn on_client_advertise(&self, _client: &Client, _channel: &ChannelDescriptor) {}
     /// Callback invoked when a client unadvertises a client channel.
-    fn on_client_unadvertise(&self, _client: Client, _channel: &ChannelDescriptor) {}
+    fn on_client_unadvertise(&self, _client: &Client, _channel: &ChannelDescriptor) {}
     /// Callback invoked when a client requests parameters. Requires
     /// [`Capability::Parameters`][super::Capability::Parameters]. Should return the named
     /// parameters, or all parameters if `param_names` is empty.
     fn on_get_parameters(
         &self,
-        _client: Client,
+        _client: &Client,
         _param_names: Vec<String>,
         _request_id: Option<&str>,
     ) -> Vec<Parameter> {
@@ -44,7 +45,7 @@ pub trait Listener: Send + Sync {
     /// value must include all parameters.
     fn on_set_parameters(
         &self,
-        _client: Client,
+        _client: &Client,
         parameters: Vec<Parameter>,
         _request_id: Option<&str>,
     ) -> Vec<Parameter> {
@@ -56,4 +57,14 @@ pub trait Listener: Send + Sync {
     /// Callback invoked when the last client unsubscribes from the named parameters.
     /// Requires [`Capability::Parameters`][super::Capability::Parameters].
     fn on_parameters_unsubscribe(&self, _param_names: Vec<String>) {}
+    /// Callback invoked when the first client subscribes to the connection graph.
+    /// Requires [`Capability::ConnectionGraph`][super::Capability::ConnectionGraph].
+    ///
+    /// Do not call `publish_connection_graph` from within this callback; doing so will deadlock.
+    fn on_connection_graph_subscribe(&self) {}
+    /// Callback invoked when the last client unsubscribes from the connection graph.
+    /// Requires [`Capability::ConnectionGraph`][super::Capability::ConnectionGraph].
+    ///
+    /// Do not call `publish_connection_graph` from within this callback; doing so will deadlock.
+    fn on_connection_graph_unsubscribe(&self) {}
 }

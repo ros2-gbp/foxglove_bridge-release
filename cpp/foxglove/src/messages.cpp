@@ -46,6 +46,7 @@ void locationFixToC(foxglove_location_fix& dest, const LocationFix& src, Arena& 
 void locationFixesToC(foxglove_location_fixes& dest, const LocationFixes& src, Arena& arena);
 void logToC(foxglove_log& dest, const Log& src, Arena& arena);
 void modelPrimitiveToC(foxglove_model_primitive& dest, const ModelPrimitive& src, Arena& arena);
+void odometryToC(foxglove_odometry& dest, const Odometry& src, Arena& arena);
 void packedElementFieldToC(
   foxglove_packed_element_field& dest, const PackedElementField& src, Arena& arena
 );
@@ -900,6 +901,41 @@ bool ModelPrimitiveChannel::hasSinks() const noexcept {
   return foxglove_channel_has_sinks(impl_.get());
 }
 
+FoxgloveResult<OdometryChannel> OdometryChannel::create(
+  const std::string_view& topic, const Context& context
+) {
+  const foxglove_channel* channel = nullptr;
+  foxglove_error error =
+    foxglove_channel_create_odometry({topic.data(), topic.size()}, context.getInner(), &channel);
+  if (error != foxglove_error::FOXGLOVE_ERROR_OK || channel == nullptr) {
+    return tl::unexpected(FoxgloveError(error));
+  }
+  return OdometryChannel(ChannelUniquePtr(channel));
+}
+
+FoxgloveError OdometryChannel::log(
+  const Odometry& msg, std::optional<uint64_t> log_time, std::optional<uint64_t> sink_id
+) noexcept {
+  Arena arena;
+  foxglove_odometry c_msg;
+  odometryToC(c_msg, msg, arena);
+  return FoxgloveError(foxglove_channel_log_odometry(
+    impl_.get(), &c_msg, log_time ? &*log_time : nullptr, sink_id ? *sink_id : 0
+  ));
+}
+
+void OdometryChannel::close() noexcept {
+  foxglove_channel_close(impl_.get());
+}
+
+uint64_t OdometryChannel::id() const noexcept {
+  return foxglove_channel_get_id(impl_.get());
+}
+
+bool OdometryChannel::hasSinks() const noexcept {
+  return foxglove_channel_has_sinks(impl_.get());
+}
+
 FoxgloveResult<PackedElementFieldChannel> PackedElementFieldChannel::create(
   const std::string_view& topic, const Context& context
 ) {
@@ -1648,41 +1684,6 @@ bool Vector3Channel::hasSinks() const noexcept {
   return foxglove_channel_has_sinks(impl_.get());
 }
 
-FoxgloveResult<Velocity3Channel> Velocity3Channel::create(
-  const std::string_view& topic, const Context& context
-) {
-  const foxglove_channel* channel = nullptr;
-  foxglove_error error =
-    foxglove_channel_create_velocity3({topic.data(), topic.size()}, context.getInner(), &channel);
-  if (error != foxglove_error::FOXGLOVE_ERROR_OK || channel == nullptr) {
-    return tl::unexpected(FoxgloveError(error));
-  }
-  return Velocity3Channel(ChannelUniquePtr(channel));
-}
-
-FoxgloveError Velocity3Channel::log(
-  const Velocity3& msg, std::optional<uint64_t> log_time, std::optional<uint64_t> sink_id
-) noexcept {
-  return FoxgloveError(foxglove_channel_log_velocity3(
-    impl_.get(),
-    reinterpret_cast<const foxglove_velocity3*>(&msg),
-    log_time ? &*log_time : nullptr,
-    sink_id ? *sink_id : 0
-  ));
-}
-
-void Velocity3Channel::close() noexcept {
-  foxglove_channel_close(impl_.get());
-}
-
-uint64_t Velocity3Channel::id() const noexcept {
-  return foxglove_channel_get_id(impl_.get());
-}
-
-bool Velocity3Channel::hasSinks() const noexcept {
-  return foxglove_channel_has_sinks(impl_.get());
-}
-
 FoxgloveResult<VoxelGridChannel> VoxelGridChannel::create(
   const std::string_view& topic, const Context& context
 ) {
@@ -1944,7 +1945,7 @@ void locationFixToC(
     static_cast<foxglove_position_covariance_type>(src.position_covariance_type);
   dest.heading = src.heading ? &*src.heading : nullptr;
   dest.velocity =
-    src.velocity ? reinterpret_cast<const foxglove_velocity3*>(&*src.velocity) : nullptr;
+    src.velocity ? reinterpret_cast<const foxglove_vector3*>(&*src.velocity) : nullptr;
   dest.color = src.color ? reinterpret_cast<const foxglove_color*>(&*src.color) : nullptr;
   dest.metadata = arena.map<foxglove_key_value_pair>(src.metadata, keyValuePairToC);
   dest.metadata_count = src.metadata.size();
@@ -1978,6 +1979,32 @@ void modelPrimitiveToC(
   dest.media_type = {src.media_type.data(), src.media_type.size()};
   dest.data = reinterpret_cast<const unsigned char*>(src.data.data());
   dest.data_len = src.data.size();
+}
+
+void odometryToC(foxglove_odometry& dest, const Odometry& src, [[maybe_unused]] Arena& arena) {
+  dest.timestamp =
+    src.timestamp ? reinterpret_cast<const foxglove_timestamp*>(&*src.timestamp) : nullptr;
+  dest.frame_id = {src.frame_id.data(), src.frame_id.size()};
+  dest.body_frame_id = {src.body_frame_id.data(), src.body_frame_id.size()};
+  dest.pose = src.pose ? arena.mapOne<foxglove_pose>(src.pose.value(), poseToC) : nullptr;
+  dest.linear_velocity = src.linear_velocity
+                           ? reinterpret_cast<const foxglove_vector3*>(&*src.linear_velocity)
+                           : nullptr;
+  dest.angular_velocity = src.angular_velocity
+                            ? reinterpret_cast<const foxglove_vector3*>(&*src.angular_velocity)
+                            : nullptr;
+  ::memcpy(
+    dest.pose_covariance,
+    src.pose_covariance.data(),
+    src.pose_covariance.size() * sizeof(*src.pose_covariance.data())
+  );
+  ::memcpy(
+    dest.velocity_covariance,
+    src.velocity_covariance.data(),
+    src.velocity_covariance.size() * sizeof(*src.velocity_covariance.data())
+  );
+  dest.metadata = arena.map<foxglove_key_value_pair>(src.metadata, keyValuePairToC);
+  dest.metadata_count = src.metadata.size();
 }
 
 void packedElementFieldToC(
@@ -2356,6 +2383,13 @@ FoxgloveError ModelPrimitive::encode(uint8_t* ptr, size_t len, size_t* encoded_l
   return FoxgloveError(foxglove_model_primitive_encode(&c_msg, ptr, len, encoded_len));
 }
 
+FoxgloveError Odometry::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
+  Arena arena;
+  foxglove_odometry c_msg;
+  odometryToC(c_msg, *this, arena);
+  return FoxgloveError(foxglove_odometry_encode(&c_msg, ptr, len, encoded_len));
+}
+
 FoxgloveError PackedElementField::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
   Arena arena;
   foxglove_packed_element_field c_msg;
@@ -2496,12 +2530,6 @@ FoxgloveError Vector3::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
   return FoxgloveError(
     foxglove_vector3_encode(reinterpret_cast<const foxglove_vector3*>(this), ptr, len, encoded_len)
   );
-}
-
-FoxgloveError Velocity3::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
-  return FoxgloveError(foxglove_velocity3_encode(
-    reinterpret_cast<const foxglove_velocity3*>(this), ptr, len, encoded_len
-  ));
 }
 
 FoxgloveError VoxelGrid::encode(uint8_t* ptr, size_t len, size_t* encoded_len) {
@@ -2741,6 +2769,16 @@ Schema ModelPrimitive::schema() {
   return result;
 }
 
+Schema Odometry::schema() {
+  struct foxglove_schema c_schema = foxglove_odometry_schema();
+  Schema result;
+  result.name = std::string(c_schema.name.data, c_schema.name.len);
+  result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
+  result.data = reinterpret_cast<const std::byte*>(c_schema.data);
+  result.data_len = c_schema.data_len;
+  return result;
+}
+
 Schema PackedElementField::schema() {
   struct foxglove_schema c_schema = foxglove_packed_element_field_schema();
   Schema result;
@@ -2943,16 +2981,6 @@ Schema Vector2::schema() {
 
 Schema Vector3::schema() {
   struct foxglove_schema c_schema = foxglove_vector3_schema();
-  Schema result;
-  result.name = std::string(c_schema.name.data, c_schema.name.len);
-  result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
-  result.data = reinterpret_cast<const std::byte*>(c_schema.data);
-  result.data_len = c_schema.data_len;
-  return result;
-}
-
-Schema Velocity3::schema() {
-  struct foxglove_schema c_schema = foxglove_velocity3_schema();
   Schema result;
   result.name = std::string(c_schema.name.data, c_schema.name.len);
   result.encoding = std::string(c_schema.encoding.data, c_schema.encoding.len);
