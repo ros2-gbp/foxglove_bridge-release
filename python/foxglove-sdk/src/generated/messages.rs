@@ -1630,7 +1630,7 @@ impl LocationFix {
         position_covariance: Option<Vec<f64>>,
         position_covariance_type: LocationFixPositionCovarianceType,
         heading: Option<f64>,
-        velocity: Option<Velocity3>,
+        velocity: Option<Vector3>,
         color: Option<Color>,
         metadata: Option<Vec<KeyValuePair>>,
     ) -> Self {
@@ -2156,6 +2156,94 @@ impl ModelPrimitive {
 
 impl From<ModelPrimitive> for foxglove::messages::ModelPrimitive {
     fn from(value: ModelPrimitive) -> Self {
+        value.0
+    }
+}
+
+/// An estimate of position, orientation, and velocity for an object or reference frame in 3D space
+///
+/// :param timestamp: Timestamp of the message
+/// :param frame_id: Reference coordinate frame (e.g. `map` or `odom`)
+/// :param body_frame_id: Coordinate frame of the body whose motion is being estimated (e.g. `base_link`)
+/// :param pose: Position and orientation of body_frame_id in frame_id
+/// :param linear_velocity: Linear velocity in m/s in body_frame_id
+/// :param angular_velocity: Angular velocity in rad/s in body_frame_id
+/// :param pose_covariance: Row-major 6x6 covariance matrix (x, y, z, rotation about x, rotation about y, rotation about z). Set to zero if unknown.
+/// :param velocity_covariance: Row-major 6x6 covariance matrix (vx, vy, vz, angular rate about x, angular rate about y, angular rate about z). Set to zero if unknown.
+/// :param metadata: Additional user-provided metadata associated with the odometry message. Keys must be unique.
+///
+/// See https://docs.foxglove.dev/docs/visualization/message-schemas/odometry
+#[pyclass(module = "foxglove.messages")]
+#[derive(Clone)]
+pub(crate) struct Odometry(pub(crate) foxglove::messages::Odometry);
+#[pymethods]
+impl Odometry {
+    #[new]
+    #[pyo3(signature = (*, timestamp=None, frame_id="", body_frame_id="", pose=None, linear_velocity=None, angular_velocity=None, pose_covariance=None, velocity_covariance=None, metadata=None) )]
+    fn new(
+        timestamp: Option<Timestamp>,
+        frame_id: &str,
+        body_frame_id: &str,
+        pose: Option<Pose>,
+        linear_velocity: Option<Vector3>,
+        angular_velocity: Option<Vector3>,
+        pose_covariance: Option<Vec<f64>>,
+        velocity_covariance: Option<Vec<f64>>,
+        metadata: Option<Vec<KeyValuePair>>,
+    ) -> Self {
+        Self(foxglove::messages::Odometry {
+            timestamp: timestamp.map(Into::into),
+            frame_id: frame_id.to_string(),
+            body_frame_id: body_frame_id.to_string(),
+            pose: pose.map(Into::into),
+            linear_velocity: linear_velocity.map(Into::into),
+            angular_velocity: angular_velocity.map(Into::into),
+            pose_covariance: pose_covariance.unwrap_or_default(),
+            velocity_covariance: velocity_covariance.unwrap_or_default(),
+            metadata: metadata
+                .unwrap_or_default()
+                .into_iter()
+                .map(|x| x.into())
+                .collect(),
+        })
+    }
+    fn __repr__(&self) -> String {
+        format!(
+            "Odometry(timestamp={:?}, frame_id={:?}, body_frame_id={:?}, pose={:?}, linear_velocity={:?}, angular_velocity={:?}, pose_covariance={:?}, velocity_covariance={:?}, metadata={:?})",
+            self.0.timestamp,
+            self.0.frame_id,
+            self.0.body_frame_id,
+            self.0.pose,
+            self.0.linear_velocity,
+            self.0.angular_velocity,
+            self.0.pose_covariance,
+            self.0.velocity_covariance,
+            self.0.metadata,
+        )
+    }
+    /// Returns the Odometry schema.
+    #[staticmethod]
+    fn get_schema() -> PySchema {
+        foxglove::messages::Odometry::get_schema().unwrap().into()
+    }
+    /// Encodes the Odometry as protobuf.
+    fn encode<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
+        PyBytes::new_with(
+            py,
+            self.0.encoded_len().expect("foxglove schemas provide len"),
+            |mut b: &mut [u8]| {
+                self.0
+                    .encode(&mut b)
+                    .expect("encoding len was provided above");
+                Ok(())
+            },
+        )
+        .expect("failed to allocate buffer for encoded message")
+    }
+}
+
+impl From<Odometry> for foxglove::messages::Odometry {
+    fn from(value: Odometry) -> Self {
         value.0
     }
 }
@@ -3261,8 +3349,8 @@ impl From<TriangleListPrimitive> for foxglove::messages::TriangleListPrimitive {
 
 /// A vector in 2D space that represents a direction only
 ///
-/// :param x: x coordinate length
-/// :param y: y coordinate length
+/// :param x: x component
+/// :param y: y component
 ///
 /// See https://docs.foxglove.dev/docs/visualization/message-schemas/vector2
 #[pyclass(module = "foxglove.messages")]
@@ -3307,9 +3395,9 @@ impl From<Vector2> for foxglove::messages::Vector2 {
 
 /// A vector in 3D space that represents a direction only
 ///
-/// :param x: x coordinate length
-/// :param y: y coordinate length
-/// :param z: z coordinate length
+/// :param x: x component
+/// :param y: y component
+/// :param z: z component
 ///
 /// See https://docs.foxglove.dev/docs/visualization/message-schemas/vector3
 #[pyclass(module = "foxglove.messages")]
@@ -3355,56 +3443,6 @@ impl From<Vector3> for foxglove::messages::Vector3 {
     }
 }
 
-/// A velocity vector in 3D space
-///
-/// :param x: x component
-/// :param y: y component
-/// :param z: z component
-///
-/// See https://docs.foxglove.dev/docs/visualization/message-schemas/velocity3
-#[pyclass(module = "foxglove.messages")]
-#[derive(Clone)]
-pub(crate) struct Velocity3(pub(crate) foxglove::messages::Velocity3);
-#[pymethods]
-impl Velocity3 {
-    #[new]
-    #[pyo3(signature = (*, x=0.0, y=0.0, z=0.0) )]
-    fn new(x: f64, y: f64, z: f64) -> Self {
-        Self(foxglove::messages::Velocity3 { x, y, z })
-    }
-    fn __repr__(&self) -> String {
-        format!(
-            "Velocity3(x={:?}, y={:?}, z={:?})",
-            self.0.x, self.0.y, self.0.z,
-        )
-    }
-    /// Returns the Velocity3 schema.
-    #[staticmethod]
-    fn get_schema() -> PySchema {
-        foxglove::messages::Velocity3::get_schema().unwrap().into()
-    }
-    /// Encodes the Velocity3 as protobuf.
-    fn encode<'a>(&self, py: Python<'a>) -> Bound<'a, PyBytes> {
-        PyBytes::new_with(
-            py,
-            self.0.encoded_len().expect("foxglove schemas provide len"),
-            |mut b: &mut [u8]| {
-                self.0
-                    .encode(&mut b)
-                    .expect("encoding len was provided above");
-                Ok(())
-            },
-        )
-        .expect("failed to allocate buffer for encoded message")
-    }
-}
-
-impl From<Velocity3> for foxglove::messages::Velocity3 {
-    fn from(value: Velocity3) -> Self {
-        value.0
-    }
-}
-
 pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let module = PyModule::new(parent_module.py(), "messages")?;
 
@@ -3442,6 +3480,7 @@ pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<SceneEntity>()?;
     module.add_class::<SceneUpdate>()?;
     module.add_class::<ModelPrimitive>()?;
+    module.add_class::<Odometry>()?;
     module.add_class::<PackedElementField>()?;
     module.add_class::<Point2>()?;
     module.add_class::<Point3>()?;
@@ -3461,7 +3500,6 @@ pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<TriangleListPrimitive>()?;
     module.add_class::<Vector2>()?;
     module.add_class::<Vector3>()?;
-    module.add_class::<Velocity3>()?;
 
     // Define as a package
     // https://github.com/PyO3/pyo3/issues/759

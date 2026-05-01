@@ -48,6 +48,7 @@ from foxglove.messages import (  # noqa: E402
     Log,
     LogLevel,
     ModelPrimitive,
+    Odometry,
     PackedElementField,
     PackedElementFieldNumericType,
     Point2,
@@ -73,7 +74,6 @@ from foxglove.messages import (  # noqa: E402
     TriangleListPrimitive,
     Vector2,
     Vector3,
-    Velocity3,
     VoxelGrid,
 )
 
@@ -102,6 +102,7 @@ FoxgloveSchema = Union[
     LocationFixes,
     Log,
     ModelPrimitive,
+    Odometry,
     PackedElementField,
     Point2,
     Point3,
@@ -124,7 +125,6 @@ FoxgloveSchema = Union[
     TriangleListPrimitive,
     Vector2,
     Vector3,
-    Velocity3,
     VoxelGrid,
 ]
 
@@ -157,6 +157,7 @@ __all__ = [
     "Log",
     "LogLevel",
     "ModelPrimitive",
+    "Odometry",
     "PackedElementField",
     "PackedElementFieldNumericType",
     "Point2",
@@ -182,6 +183,5 @@ __all__ = [
     "TriangleListPrimitive",
     "Vector2",
     "Vector3",
-    "Velocity3",
     "VoxelGrid",
 ]

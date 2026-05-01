@@ -625,7 +625,7 @@ pub struct LocationFix {
     pub heading: ::core::option::Option<f64>,
     /// Velocity in local East-North-Up (ENU) frame in m/s
     #[prost(message, optional, tag = "11")]
-    pub velocity: ::core::option::Option<Velocity3>,
+    pub velocity: ::core::option::Option<Vector3>,
     /// Color used to visualize the location
     #[prost(message, optional, tag = "8")]
     pub color: ::core::option::Option<Color>,
@@ -805,6 +805,44 @@ pub struct ModelPrimitive {
     #[prost(bytes = "bytes", tag = "7")]
     #[cfg_attr(feature = "serde", serde(with = "crate::messages::serde_bytes"))]
     pub data: ::prost::bytes::Bytes,
+}
+/// An estimate of position, orientation, and velocity for an object or reference frame in 3D space
+///
+/// <https://docs.foxglove.dev/docs/visualization/message-schemas/odometry>
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Odometry {
+    /// Timestamp of the message
+    #[prost(message, optional, tag = "1")]
+    pub timestamp: ::core::option::Option<crate::messages::Timestamp>,
+    /// Reference coordinate frame (e.g. `map` or `odom`)
+    #[prost(string, tag = "2")]
+    pub frame_id: ::prost::alloc::string::String,
+    /// Coordinate frame of the body whose motion is being estimated (e.g. `base_link`)
+    #[prost(string, tag = "3")]
+    pub body_frame_id: ::prost::alloc::string::String,
+    /// Position and orientation of body_frame_id in frame_id
+    #[prost(message, optional, tag = "4")]
+    pub pose: ::core::option::Option<Pose>,
+    /// Linear velocity in m/s in body_frame_id
+    #[prost(message, optional, tag = "5")]
+    pub linear_velocity: ::core::option::Option<Vector3>,
+    /// Angular velocity in rad/s in body_frame_id
+    #[prost(message, optional, tag = "6")]
+    pub angular_velocity: ::core::option::Option<Vector3>,
+    /// Row-major 6x6 covariance matrix (x, y, z, rotation about x, rotation about y, rotation about z). Set to zero if unknown.
+    ///
+    /// length 36
+    #[prost(double, repeated, tag = "7")]
+    pub pose_covariance: ::prost::alloc::vec::Vec<f64>,
+    /// Row-major 6x6 covariance matrix (vx, vy, vz, angular rate about x, angular rate about y, angular rate about z). Set to zero if unknown.
+    ///
+    /// length 36
+    #[prost(double, repeated, tag = "8")]
+    pub velocity_covariance: ::prost::alloc::vec::Vec<f64>,
+    /// Additional user-provided metadata associated with the odometry message. Keys must be unique.
+    #[prost(message, repeated, tag = "9")]
+    pub metadata: ::prost::alloc::vec::Vec<KeyValuePair>,
 }
 /// A field present within each element in a byte array of packed elements.
 ///
@@ -1455,10 +1493,10 @@ pub struct TriangleListPrimitive {
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct Vector2 {
-    /// x coordinate length
+    /// x component
     #[prost(double, tag = "1")]
     pub x: f64,
-    /// y coordinate length
+    /// y component
     #[prost(double, tag = "2")]
     pub y: f64,
 }
@@ -1468,22 +1506,6 @@ pub struct Vector2 {
 #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct Vector3 {
-    /// x coordinate length
-    #[prost(double, tag = "1")]
-    pub x: f64,
-    /// y coordinate length
-    #[prost(double, tag = "2")]
-    pub y: f64,
-    /// z coordinate length
-    #[prost(double, tag = "3")]
-    pub z: f64,
-}
-/// A velocity vector in 3D space
-///
-/// <https://docs.foxglove.dev/docs/visualization/message-schemas/velocity3>
-#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct Velocity3 {
     /// x component
     #[prost(double, tag = "1")]
     pub x: f64,
