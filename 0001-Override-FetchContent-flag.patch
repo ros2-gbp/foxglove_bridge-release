@@ -1,4 +1,4 @@
-From d406c1c2f1a61caf26acc502cf4b54b59b44652d Mon Sep 17 00:00:00 2001
+From bac0ae3f11a2e995871ee25fff202dc6610da97e Mon Sep 17 00:00:00 2001
 From: Eric Lujan <eric@foxglove.dev>
 Date: Thu, 25 Sep 2025 12:18:20 -0700
 Subject: [PATCH] Override FetchContent flag
@@ -20,5 +20,5 @@ index a856369d..b36b206d 100755
  
  override_dh_auto_build:
 -- 
-2.43.0
+2.34.1
 
