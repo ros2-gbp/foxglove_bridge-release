@@ -1,50 +1,31 @@
-ARG ROS_DISTRIBUTION=rolling
-FROM ros:$ROS_DISTRIBUTION-ros-base
+# Local development image. See Makefile for usage.
+FROM rust:1.89-trixie AS builder
 
-# Prevent errors from apt-get.
-# See: http://askubuntu.com/questions/506158/unable-to-initialize-frontend-dialog-when-using-ssh
-ENV DEBIAN_FRONTEND=noninteractive
+ARG MSRV_RUST_VERSION=1.85.0
 
-# Keep ROS rolling base packages in sync.
-RUN apt-get update && apt-get -y dist-upgrade
+WORKDIR /app
 
-# Create foxglove user
-ARG USERNAME=foxglove
-ARG USER_UID=1005
-ARG USER_GID=$USER_UID
-RUN groupadd --gid $USER_GID $USERNAME \
-    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
-    && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/$USERNAME
+RUN rustup toolchain install nightly --component rust-src
+RUN rustup toolchain install ${MSRV_RUST_VERSION}
+RUN rustup component add rustfmt clippy
 
-USER $USERNAME
+RUN apt-get update \
+    && apt-get install -y \
+        clang-19 \
+        clang-format-19 \
+        clang-tidy-19 \
+        cmake \
+        doxygen \
+        libva-dev \
+        nodejs \
+        npm \
+        protobuf-compiler \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# rosdep update must run as user
-RUN rosdep update --include-eol-distros
+RUN corepack enable yarn
 
-# Set up the workspace
-WORKDIR /ros
-COPY --chown=$USER_UID:$USER_GID . /ros/src/foxglove_bridge
+ENV PATH=/usr/lib/llvm-19/bin:/root/.local/bin:$PATH \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
-# Install ROS dependencies
-RUN rosdep install -y \
-    --from-paths src \
-    --ignore-src
-
-# Build bridge
-RUN /bin/bash -c '. /opt/ros/$ROS_DISTRO/setup.bash && \
-    colcon build --packages-select foxglove_bridge'
-
-RUN <<EOF
-# Write out bash script to source ROS setup script and wrap launch file
-echo '#!/bin/bash
-set -e
-source /ros/install/setup.bash
-exec ros2 launch foxglove_bridge foxglove_bridge_launch.xml "$@"' > /ros/entrypoint.sh
-
-chmod +x /ros/entrypoint.sh
-EOF
-
-
-EXPOSE 8765
-
-ENTRYPOINT ["./entrypoint.sh"]
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
