@@ -8,6 +8,11 @@ publish = false
 name = "foxglove"
 crate-type = ["staticlib", "cdylib"]
 
+# The `remote_access` feature gates `mod gateway` in src/lib.rs. It can be enabled via
+# the CMake option FOXGLOVE_REMOTE_ACCESS, which passes this feature to corrosion.
+[features]
+remote-access = ["foxglove/remote-access"]
+
 [lints]
 workspace = true
 
@@ -20,6 +25,7 @@ foxglove = { path = "../rust/foxglove", default-features = false }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 foxglove = { path = "../rust/foxglove", default-features = false, features = [
   "lz4",
+  "sysinfo",
   "tls",
   "websocket",
   "zstd",
