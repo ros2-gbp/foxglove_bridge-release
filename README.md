@@ -78,7 +78,7 @@ You can also build the bridge using a ROS environment within a Docker container:
 make docker-build
 ```
 
-The built ROS workspace will be written to `/ros` in your `foxglove_sdk` directory.
+The built ROS workspace will be written to `/ros` in your `foxglove-sdk` directory.
 
 ## Running the bridge
 
@@ -131,6 +131,11 @@ Parameters are provided to configure the behavior of the bridge. These parameter
 - **certfile**: Path to an X.509 certificate used for WSS. **Must be supplied if `tls` is set to `true`.**
 - **keyfile**: Path to the PEM-encoded PKCS#8 private key used to generate `certfile`. **Must be supplied if `tls` is set to `true`.**
 - **use_sim_time**: Use the `/clock` topic as a time source. Defaults to `false`.
+- **sysinfo**: Publish process and system statistics (CPU, memory, etc.) on a channel. Defaults to `true`.
+- **sysinfo_topic**: Topic name for system info messages. Defaults to `/foxglove_bridge/sysinfo`.
+- **sysinfo_refresh_interval**: Refresh interval for system info messages in milliseconds. Minimum 200ms. Defaults to `500`.
+- **remote_access**: Enable the remote access gateway, allowing the bridge to be reached through Foxglove's platform without exposing a port on the device. Requires the bridge to be built with `FOXGLOVE_BRIDGE_REMOTE_ACCESS=ON` (the default for our published Docker images). Defaults to `false`.
+- **device_token**: Foxglove device token used to authenticate with the Foxglove platform when `remote_access` is enabled. If empty, the bridge falls back to the `FOXGLOVE_DEVICE_TOKEN` environment variable.
 
 #### Capabilities
 
@@ -146,6 +151,8 @@ The `capabilities` parameter can accept one or more of the following values.
 
 ### Diagnostic topics
 If `publish_client_count` is set to `true`, foxglove_bridge publishes the number of currently connected clients to the topic `/foxglove_bridge/client_count`.
+
+If `sysinfo` is set to `true` (the default), foxglove_bridge publishes process and system statistics to the topic configured by `sysinfo_topic` (default `/foxglove_bridge/sysinfo`).
 ## For developers
 
 ### Building with local SDK changes
