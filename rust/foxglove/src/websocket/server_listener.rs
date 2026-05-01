@@ -14,6 +14,7 @@ pub trait ServerListener: Send + Sync {
     /// Only invoked if the channel is associated with the server and isn't already subscribed to by the client.
     fn on_subscribe(&self, _client: Client, _channel: ChannelView) {}
     /// Callback invoked when a client unsubscribes from a channel or disconnects.
+    /// Also invoked when a subscribed channel is removed from the server.
     /// Only invoked for channels that had an active subscription from the client.
     fn on_unsubscribe(&self, _client: Client, _channel: ChannelView) {}
     /// Callback invoked when a client advertises a client channel. Requires
@@ -59,9 +60,13 @@ pub trait ServerListener: Send + Sync {
     fn on_parameters_unsubscribe(&self, _param_names: Vec<String>) {}
     /// Callback invoked when the first client subscribes to the connection graph. Requires
     /// [`Capability::ConnectionGraph`][super::Capability::ConnectionGraph].
+    ///
+    /// Do not call `publish_connection_graph` from within this callback; doing so will deadlock.
     fn on_connection_graph_subscribe(&self) {}
     /// Callback invoked when the last client unsubscribes from the connection graph. Requires
     /// [`Capability::ConnectionGraph`][super::Capability::ConnectionGraph].
+    ///
+    /// Do not call `publish_connection_graph` from within this callback; doing so will deadlock.
     fn on_connection_graph_unsubscribe(&self) {}
     /// Callback invoked when a client connects to the server.
     fn on_client_connect(&self) {}
