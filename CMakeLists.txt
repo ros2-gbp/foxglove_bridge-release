@@ -9,7 +9,7 @@ if(POLICY CMP0024)
   set(CMAKE_POLICY_DEFAULT_CMP0024 NEW)
 endif()
 
-project(foxglove_bridge LANGUAGES CXX VERSION 3.2.6)
+project(foxglove_bridge LANGUAGES CXX VERSION 3.3.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,7 +19,7 @@ if (POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-option(USE_LOCAL_SDK "Use pre-built Foxglove SDK binaries from local source tree" OFF)
+option(FOXGLOVE_BRIDGE_REMOTE_ACCESS "Build with remote access gateway support" ON)
 
 macro(enable_strict_compiler_warnings target)
   if (MSVC)
@@ -55,49 +55,45 @@ if (ENDIAN)
   add_compile_definitions(ARCH_IS_BIG_ENDIAN=1)
 endif()
 
-if (USE_LOCAL_SDK)
-  set(FOXGLOVE_SDK_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
-  add_library(foxglove_cpp_static STATIC IMPORTED)
-  set_target_properties(foxglove_cpp_static PROPERTIES
-    IMPORTED_LOCATION ${FOXGLOVE_SDK_ROOT}/cpp/build/libfoxglove_cpp_static.a
-  )
-  add_library(foxglove_c_static STATIC IMPORTED)
-  set_target_properties(foxglove_c_static PROPERTIES
-    IMPORTED_LOCATION ${FOXGLOVE_SDK_ROOT}/cpp/build/libfoxglove.a
-  )
+set(FOXGLOVE_SDK_VERSION "0.23.1")
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+  set(FOXGLOVE_SDK_PLATFORM "aarch64-unknown-linux-gnu")
+  set(FOXGLOVE_SDK_SHA "ec20bcf1aa769fc9b76d84ff3e15c0df3f0a2b3ee56eb7ee45e3f1e4306620bc")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  set(FOXGLOVE_SDK_PLATFORM "x86_64-unknown-linux-gnu")
+  set(FOXGLOVE_SDK_SHA "b949295e80eb1a9bb356e657b9c2579c886717fac290c4e48a5e9846063bf2e8")
 else()
-  message(STATUS "Fetching Foxglove SDK artifacts from GitHub")
-  set(FOXGLOVE_SDK_VERSION "0.19.0")
-
-  if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-    set(FOXGLOVE_SDK_PLATFORM "aarch64-unknown-linux-gnu")
-    set(FOXGLOVE_SDK_SHA "7b1a7911f4cdf491ea6d38486af6f730ab3c90d4e54071a85bb887994424e51b")
-  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    set(FOXGLOVE_SDK_PLATFORM "x86_64-unknown-linux-gnu")
-    set(FOXGLOVE_SDK_SHA "f3d2f6a8ba97fedeae13b978f5e8a51dec4803eddfd23b198a292bf9ab6675ff")
-  else()
-    message(FATAL_ERROR "Unsupported platform/architecture combination: ${CMAKE_SYSTEM_PROCESSOR}-${CMAKE_SYSTEM_NAME}")
-  endif()
-  set(FOXGLOVE_SDK_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2Fv${FOXGLOVE_SDK_VERSION}/foxglove-v${FOXGLOVE_SDK_VERSION}-cpp-${FOXGLOVE_SDK_PLATFORM}.zip")
-
-  include(FetchContent)
-  FetchContent_Declare(
-    foxglove_sdk
-    URL ${FOXGLOVE_SDK_URL}
-    URL_HASH SHA256=${FOXGLOVE_SDK_SHA}
-  )
-  FetchContent_MakeAvailable(foxglove_sdk)
-  add_library(foxglove_cpp_static STATIC)
-  target_include_directories(foxglove_cpp_static SYSTEM
-    PUBLIC
-      $<BUILD_INTERFACE:${foxglove_sdk_SOURCE_DIR}/include>
-      $<INSTALL_INTERFACE:include>
-  )
-  file(GLOB_RECURSE FOXGLOVE_SDK_SOURCES CONFIGURE_DEPENDS "${foxglove_sdk_SOURCE_DIR}/src/*.cpp")
-  target_sources(foxglove_cpp_static PRIVATE ${FOXGLOVE_SDK_SOURCES})
-  set_target_properties(foxglove_cpp_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
-  target_link_libraries(foxglove_cpp_static PRIVATE ${foxglove_sdk_SOURCE_DIR}/lib/libfoxglove.a)
+  message(FATAL_ERROR "Unsupported platform/architecture combination: ${CMAKE_SYSTEM_PROCESSOR}-${CMAKE_SYSTEM_NAME}")
 endif()
+set(FOXGLOVE_SDK_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2Fv${FOXGLOVE_SDK_VERSION}/foxglove-v${FOXGLOVE_SDK_VERSION}-cpp-${FOXGLOVE_SDK_PLATFORM}.zip")
+
+include(FetchContent)
+FetchContent_Declare(
+  foxglove_sdk
+  URL ${FOXGLOVE_SDK_URL}
+  URL_HASH SHA256=${FOXGLOVE_SDK_SHA}
+)
+FetchContent_MakeAvailable(foxglove_sdk)
+file(GLOB_RECURSE FOXGLOVE_SDK_SOURCES CONFIGURE_DEPENDS "${foxglove_sdk_SOURCE_DIR}/src/*.cpp")
+
+add_library(foxglove_cpp_shared SHARED)
+target_include_directories(foxglove_cpp_shared SYSTEM
+  PUBLIC
+    $<BUILD_INTERFACE:${foxglove_sdk_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_sources(foxglove_cpp_shared PRIVATE ${FOXGLOVE_SDK_SOURCES})
+# Import the prebuilt C shared library from the fetched SDK
+add_library(foxglove-shared SHARED IMPORTED)
+set_target_properties(foxglove-shared PROPERTIES
+  IMPORTED_LOCATION ${foxglove_sdk_SOURCE_DIR}/lib/libfoxglove.so
+)
+target_link_libraries(foxglove_cpp_shared PRIVATE foxglove-shared)
+set_target_properties(foxglove_cpp_shared PROPERTIES
+  INSTALL_RPATH "$ORIGIN"
+  BUILD_WITH_INSTALL_RPATH TRUE
+)
 
 find_program(GIT_SCM git DOC "Git version control")
 if (GIT_SCM)
@@ -137,30 +133,10 @@ add_library(foxglove_bridge_component SHARED
 target_include_directories(foxglove_bridge_component
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../c/include>
     # For generated version.hpp
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-
-# If using the local SDK, include the C++ SDK headers from the local source tree, else
-# include the C++ SDK headers from the installed location
-if (USE_LOCAL_SDK)
-  target_include_directories(foxglove_bridge_component
-    PUBLIC
-      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../../cpp/foxglove/include>
-  )
-else()
-  target_include_directories(foxglove_bridge_component
-    PUBLIC
-      $<BUILD_INTERFACE:${foxglove_sdk_SOURCE_DIR}/include>
-  )
-endif()
-
-if (USE_LOCAL_SDK)
-  # The locally-built C++ SDK needs to be statically linked to the C SDK
-  target_link_libraries(foxglove_bridge_component foxglove_c_static)
-endif()
 
 if (nlohmann_json_FOUND)
   target_link_libraries(foxglove_bridge_component nlohmann_json::nlohmann_json)
@@ -173,11 +149,15 @@ target_compile_definitions(foxglove_bridge_component
     RESOURCE_RETRIEVER_VERSION_PATCH=${resource_retriever_VERSION_PATCH}
 )
 
+if (FOXGLOVE_BRIDGE_REMOTE_ACCESS)
+  target_compile_definitions(foxglove_bridge_component PUBLIC FOXGLOVE_REMOTE_ACCESS)
+endif()
+
 target_link_libraries(foxglove_bridge_component
+  foxglove_cpp_shared
   ${rosgraph_msgs_TARGETS}
   ${std_msgs_TARGETS}
   ament_index_cpp::ament_index_cpp
-  foxglove_cpp_static
   rclcpp::rclcpp
   rclcpp_components::component
   rclcpp_components::component_manager
@@ -187,6 +167,10 @@ target_link_libraries(foxglove_bridge_component
 
 rclcpp_components_register_nodes(foxglove_bridge_component "foxglove_bridge::FoxgloveBridge")
 enable_strict_compiler_warnings(foxglove_bridge_component)
+set_target_properties(foxglove_bridge_component PROPERTIES
+  INSTALL_RPATH "$ORIGIN"
+  BUILD_WITH_INSTALL_RPATH TRUE
+)
 
 add_executable(foxglove_bridge
   src/ros2_foxglove_bridge_node.cpp
@@ -233,6 +217,10 @@ install(TARGETS foxglove_bridge_component
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
+# Install the SDK shared libraries alongside the bridge component library so
+# the runtime linker can find them via RPATH ($ORIGIN).
+install(FILES $<TARGET_FILE:foxglove_cpp_shared> DESTINATION lib)
+install(FILES $<TARGET_FILE:foxglove-shared> DESTINATION lib)
 install(TARGETS foxglove_bridge
   DESTINATION lib/${PROJECT_NAME}
 )
