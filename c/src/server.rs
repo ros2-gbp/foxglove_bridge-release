@@ -3,8 +3,8 @@ use crate::connection_graph::FoxgloveConnectionGraph;
 use crate::fetch_asset::{FetchAssetHandler, FoxgloveFetchAssetResponder};
 use crate::service::FoxgloveService;
 use crate::sink_channel_filter::ChannelFilter;
+use crate::util::parse_key_value_array;
 use bitflags::bitflags;
-use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
@@ -466,24 +466,13 @@ unsafe fn do_foxglove_server_start(
         server = server.tls(tls_identity);
     }
     if options.server_info_count > 0 {
-        if options.server_info.is_null() {
-            return Err(foxglove::FoxgloveError::ValueError(
-                "server_info is null".to_string(),
-            ));
-        }
-        let opts_info = options.server_info;
-        let mut server_info = HashMap::new();
-        for i in 0..options.server_info_count {
-            let kv = unsafe { &*opts_info.add(i) };
-            if kv.key.data.is_null() || kv.value.data.is_null() {
-                return Err(foxglove::FoxgloveError::ValueError(
-                    "null key or value in server_info".to_string(),
-                ));
-            }
-            let key = unsafe { kv.key.as_utf8_str() }?;
-            let value = unsafe { kv.value.as_utf8_str() }?;
-            server_info.insert(key.to_string(), value.to_string());
-        }
+        let server_info = unsafe {
+            parse_key_value_array(
+                options.server_info,
+                options.server_info_count,
+                "server_info",
+            )?
+        };
         server = server.server_info(server_info);
     }
 
@@ -565,7 +554,7 @@ pub unsafe extern "C" fn foxglove_server_broadcast_playback_state(
 /// If `session_id` is not provided, generates a new one based on the current timestamp.
 ///
 /// # Safety
-/// - `session_id` must either be NULL, or a valid pointer to a UTF-8 string.
+/// - `session_id` must either be NULL, or a pointer to a valid UTF-8 string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn foxglove_server_clear_session(
     server: Option<&FoxgloveWebSocketServer>,
@@ -602,16 +591,16 @@ pub unsafe extern "C" fn foxglove_server_add_service(
     server: Option<&FoxgloveWebSocketServer>,
     service: *mut FoxgloveService,
 ) -> FoxgloveError {
-    let Some(server) = server else {
-        return FoxgloveError::ValueError;
-    };
     if service.is_null() {
         return FoxgloveError::ValueError;
     }
+    let service = unsafe { FoxgloveService::from_raw(service) };
+    let Some(server) = server else {
+        return FoxgloveError::ValueError;
+    };
     let Some(server) = server.as_ref() else {
         return FoxgloveError::SinkClosed;
     };
-    let service = unsafe { FoxgloveService::from_raw(service) };
     server
         .add_services([service.into_inner()])
         .err()
@@ -623,7 +612,7 @@ pub unsafe extern "C" fn foxglove_server_add_service(
 ///
 /// # Safety
 /// - `server` must be a valid pointer to a server started with `foxglove_server_start`.
-/// - `service_name` must be a valid pointer to a UTF-8 string.
+/// - `service_name` must be a valid UTF-8 string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn foxglove_server_remove_service(
     server: Option<&FoxgloveWebSocketServer>,
@@ -771,9 +760,9 @@ impl From<FoxgloveServerStatusLevel> for foxglove::websocket::StatusLevel {
 /// `foxglove_server_remove_status`.
 ///
 /// # Safety
-/// - `message` must be a valid pointer to a UTF-8 string, which must remain valid for the duration
-///   of this call.
-/// - `id` must either be NULL, or a valid pointer to a UTF-8 string, which must remain valid for
+/// - `message` must be a valid UTF-8 string, which must remain valid for the duration of this
+///   call.
+/// - `id` must either be NULL, or a pointer to a valid UTF-8 string, which must remain valid for
 ///   the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn foxglove_server_publish_status(
@@ -809,8 +798,8 @@ pub unsafe extern "C" fn foxglove_server_publish_status(
 /// Previously published status messages are referenced by ID.
 ///
 /// # Safety
-/// - `ids` must be a valid pointer to an array of pointers to valid UTF-8 strings, all of which
-///   must remain valid for the duration of this call.
+/// - `ids` must be a pointer to an array of valid UTF-8 strings, all of which must remain valid
+///   for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn foxglove_server_remove_status(
     server: Option<&mut FoxgloveWebSocketServer>,
@@ -846,7 +835,10 @@ impl foxglove::websocket::ServerListener for FoxgloveServerCallbacks {
         if let Some(on_subscribe) = self.on_subscribe {
             let c_client_metadata = FoxgloveClientMetadata {
                 id: client.id().into(),
-                sink_id: client.sink_id().map(|id| id.into()).unwrap_or(0),
+                sink_id: client
+                    .sink_id()
+                    .expect("websocket client has a sink_id")
+                    .into(),
             };
             unsafe { on_subscribe(self.context, channel.id().into(), c_client_metadata) };
         }
@@ -860,7 +852,10 @@ impl foxglove::websocket::ServerListener for FoxgloveServerCallbacks {
         if let Some(on_unsubscribe) = self.on_unsubscribe {
             let c_client_metadata = FoxgloveClientMetadata {
                 id: client.id().into(),
-                sink_id: client.sink_id().map(|id| id.into()).unwrap_or(0),
+                sink_id: client
+                    .sink_id()
+                    .expect("websocket client has a sink_id")
+                    .into(),
             };
             unsafe { on_unsubscribe(self.context, channel.id().into(), c_client_metadata) };
         }

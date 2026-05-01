@@ -42,6 +42,7 @@ If the IDL does not support optional fields (e.g. ROS) you must specify a value 
 - [LocationFixes](#locationfixes)
 - [Log](#log)
 - [ModelPrimitive](#modelprimitive)
+- [Odometry](#odometry)
 - [PackedElementField](#packedelementfield)
 - [Point2](#point2)
 - [Point3](#point3)
@@ -64,7 +65,6 @@ If the IDL does not support optional fields (e.g. ROS) you must specify a value 
 - [TriangleListPrimitive](#trianglelistprimitive)
 - [Vector2](#vector2)
 - [Vector3](#vector3)
-- [Velocity3](#velocity3)
 - [VoxelGrid](#voxelgrid)
 
 ----
@@ -1856,7 +1856,7 @@ Heading (yaw angle), in radians, measured clockwise from north
 <td><code>velocity</code> (optional)</td>
 <td>
 
-[Velocity3](#velocity3)
+[Vector3](#vector3)
 
 </td>
 <td>
@@ -2106,6 +2106,135 @@ bytes
 <td>
 
 Embedded model. One of `url` or `data` should be non-empty. If `data` is non-empty, `media_type` must be set to indicate the type of the data.
+
+</td>
+</tr>
+</table>
+
+## Odometry
+
+An estimate of position, orientation, and velocity for an object or reference frame in 3D space
+
+<table>
+  <tr>
+    <th>field</th>
+    <th>type</th>
+    <th>description</th>
+  </tr>
+<tr>
+<td><code>timestamp</code></td>
+<td>
+
+[Timestamp](#timestamp)
+
+</td>
+<td>
+
+Timestamp of the message
+
+</td>
+</tr>
+<tr>
+<td><code>frame_id</code></td>
+<td>
+
+string
+
+</td>
+<td>
+
+Reference coordinate frame (e.g. `map` or `odom`)
+
+</td>
+</tr>
+<tr>
+<td><code>body_frame_id</code></td>
+<td>
+
+string
+
+</td>
+<td>
+
+Coordinate frame of the body whose motion is being estimated (e.g. `base_link`)
+
+</td>
+</tr>
+<tr>
+<td><code>pose</code></td>
+<td>
+
+[Pose](#pose)
+
+</td>
+<td>
+
+Position and orientation of body_frame_id in frame_id
+
+</td>
+</tr>
+<tr>
+<td><code>linear_velocity</code> (optional)</td>
+<td>
+
+[Vector3](#vector3)
+
+</td>
+<td>
+
+Linear velocity in m/s in body_frame_id
+
+</td>
+</tr>
+<tr>
+<td><code>angular_velocity</code> (optional)</td>
+<td>
+
+[Vector3](#vector3)
+
+</td>
+<td>
+
+Angular velocity in rad/s in body_frame_id
+
+</td>
+</tr>
+<tr>
+<td><code>pose_covariance</code> (optional)</td>
+<td>
+
+float64[36]
+
+</td>
+<td>
+
+Row-major 6x6 covariance matrix (x, y, z, rotation about x, rotation about y, rotation about z). Set to zero if unknown.
+
+</td>
+</tr>
+<tr>
+<td><code>velocity_covariance</code> (optional)</td>
+<td>
+
+float64[36]
+
+</td>
+<td>
+
+Row-major 6x6 covariance matrix (vx, vy, vz, angular rate about x, angular rate about y, angular rate about z). Set to zero if unknown.
+
+</td>
+</tr>
+<tr>
+<td><code>metadata</code> (optional)</td>
+<td>
+
+[KeyValuePair](#keyvaluepair)[]
+
+</td>
+<td>
+
+Additional user-provided metadata associated with the odometry message. Keys must be unique.
 
 </td>
 </tr>
@@ -3619,7 +3748,7 @@ float64
 </td>
 <td>
 
-x coordinate length
+x component
 
 </td>
 </tr>
@@ -3632,7 +3761,7 @@ float64
 </td>
 <td>
 
-y coordinate length
+y component
 
 </td>
 </tr>
@@ -3641,57 +3770,6 @@ y coordinate length
 ## Vector3
 
 A vector in 3D space that represents a direction only
-
-<table>
-  <tr>
-    <th>field</th>
-    <th>type</th>
-    <th>description</th>
-  </tr>
-<tr>
-<td><code>x</code></td>
-<td>
-
-float64
-
-</td>
-<td>
-
-x coordinate length
-
-</td>
-</tr>
-<tr>
-<td><code>y</code></td>
-<td>
-
-float64
-
-</td>
-<td>
-
-y coordinate length
-
-</td>
-</tr>
-<tr>
-<td><code>z</code></td>
-<td>
-
-float64
-
-</td>
-<td>
-
-z coordinate length
-
-</td>
-</tr>
-</table>
-
-## Velocity3
-
-A velocity vector in 3D space
 
 <table>
   <tr>
