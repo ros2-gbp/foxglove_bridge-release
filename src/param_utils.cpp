@@ -1,7 +1,8 @@
+#include "foxglove_bridge/param_utils.hpp"
 
+#include <rcl_interfaces/msg/parameter_descriptor.hpp>
 
 #include <foxglove_bridge/common.hpp>
-#include <foxglove_bridge/param_utils.hpp>
 
 namespace foxglove_bridge {
 
@@ -200,6 +201,77 @@ void declareParameters(rclcpp::Node* node) {
   publishClientCountDescription.description = "Publish the number of connected clients";
   publishClientCountDescription.read_only = true;
   node->declare_parameter(PARAM_PUBLISH_CLIENT_COUNT, false, publishClientCountDescription);
+
+  auto sysinfoDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  sysinfoDescription.name = PARAM_SYSINFO;
+  sysinfoDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
+  sysinfoDescription.description =
+    "Publish process and system statistics (CPU, memory, etc.) on a channel";
+  sysinfoDescription.read_only = true;
+  node->declare_parameter(PARAM_SYSINFO, true, sysinfoDescription);
+
+  auto sysinfoTopicDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  sysinfoTopicDescription.name = PARAM_SYSINFO_TOPIC;
+  sysinfoTopicDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
+  sysinfoTopicDescription.description =
+    "Topic name for system info messages. Defaults to /foxglove_bridge/sysinfo.";
+  sysinfoTopicDescription.read_only = true;
+  node->declare_parameter(PARAM_SYSINFO_TOPIC, DEFAULT_SYSINFO_TOPIC, sysinfoTopicDescription);
+
+  auto sysinfoRefreshIntervalDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  sysinfoRefreshIntervalDescription.name = PARAM_SYSINFO_REFRESH_INTERVAL;
+  sysinfoRefreshIntervalDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER;
+  sysinfoRefreshIntervalDescription.description =
+    "Refresh interval for system info messages in milliseconds. Minimum 200ms.";
+  sysinfoRefreshIntervalDescription.read_only = true;
+  sysinfoRefreshIntervalDescription.integer_range.resize(1);
+  sysinfoRefreshIntervalDescription.integer_range[0].from_value = 200;
+  sysinfoRefreshIntervalDescription.integer_range[0].to_value = std::numeric_limits<int64_t>::max();
+  sysinfoRefreshIntervalDescription.integer_range[0].step = 1;
+  node->declare_parameter(PARAM_SYSINFO_REFRESH_INTERVAL, DEFAULT_SYSINFO_REFRESH_INTERVAL_MS,
+                          sysinfoRefreshIntervalDescription);
+
+  auto messageBacklogSizeDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  messageBacklogSizeDescription.name = PARAM_MESSAGE_BACKLOG_SIZE;
+  messageBacklogSizeDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER;
+  messageBacklogSizeDescription.description =
+    "Maximum number of outgoing messages to buffer per connected WebSocket client or "
+    "remote access gateway participant. The WebSocket server drops the oldest data-plane "
+    "message on overflow and disconnects clients whose control-plane queue fills. The "
+    "remote access gateway disconnects participants whose queue fills.";
+  messageBacklogSizeDescription.read_only = true;
+  messageBacklogSizeDescription.integer_range.resize(1);
+  messageBacklogSizeDescription.integer_range[0].from_value = 1;
+  messageBacklogSizeDescription.integer_range[0].to_value = std::numeric_limits<int64_t>::max();
+  messageBacklogSizeDescription.integer_range[0].step = 1;
+  node->declare_parameter(PARAM_MESSAGE_BACKLOG_SIZE, DEFAULT_MESSAGE_BACKLOG_SIZE,
+                          messageBacklogSizeDescription);
+
+  auto remoteAccessDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  remoteAccessDescription.name = PARAM_REMOTE_ACCESS;
+  remoteAccessDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_BOOL;
+  remoteAccessDescription.description =
+    "Enable the remote access gateway for Foxglove platform. "
+    "Requires the bridge to be built with FOXGLOVE_BRIDGE_REMOTE_ACCESS=ON.";
+  remoteAccessDescription.read_only = true;
+  node->declare_parameter(PARAM_REMOTE_ACCESS, false, remoteAccessDescription);
+
+  auto deviceTokenDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  deviceTokenDescription.name = PARAM_DEVICE_TOKEN;
+  deviceTokenDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
+  deviceTokenDescription.description =
+    "Foxglove device token for platform authentication. "
+    "If empty, falls back to FOXGLOVE_DEVICE_TOKEN environment variable.";
+  deviceTokenDescription.read_only = true;
+  node->declare_parameter(PARAM_DEVICE_TOKEN, "", deviceTokenDescription);
+
+  auto foxgloveApiUrlDescription = rcl_interfaces::msg::ParameterDescriptor{};
+  foxgloveApiUrlDescription.name = PARAM_FOXGLOVE_API_URL;
+  foxgloveApiUrlDescription.type = rcl_interfaces::msg::ParameterType::PARAMETER_STRING;
+  foxgloveApiUrlDescription.description =
+    "Override the Foxglove API base URL. If empty, the SDK default is used.";
+  foxgloveApiUrlDescription.read_only = true;
+  node->declare_parameter(PARAM_FOXGLOVE_API_URL, "", foxgloveApiUrlDescription);
 }
 
 std::vector<std::regex> parseRegexStrings(rclcpp::Node* node,
