@@ -5,11 +5,13 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::PyContext;
+use crate::logging::init_logging;
 
 /// A handle to a running system info publisher.
 ///
 /// The publisher is started by :py:func:`foxglove.start_sysinfo_publisher` and runs in
-/// the background until :py:meth:`stop` is called.
+/// the background until :py:meth:`stop` is called. See :py:func:`foxglove.start_sysinfo_publisher`
+/// for the list of metrics published on the channel.
 #[pyclass(name = "SystemInfoPublisher", module = "foxglove")]
 pub struct PySystemInfoPublisher(Option<SystemInfoHandle>);
 
@@ -28,7 +30,10 @@ impl PySystemInfoPublisher {
 /// Start the system info publisher.
 ///
 /// Periodically publishes a ``SystemInfo`` message to a channel containing process and
-/// system statistics (memory, CPU, OS info).
+/// system statistics (memory, CPU, OS info). See :py:func:`foxglove.start_sysinfo_publisher`
+/// for the full list of published metrics.
+///
+/// The caller is responsible for calling stop() on the returned handle when done; dropping the handle does not stop the background task.
 ///
 /// :param topic: The channel topic name. Defaults to ``/sysinfo``.
 /// :type topic: str | None
@@ -43,10 +48,13 @@ impl PySystemInfoPublisher {
 #[pyfunction]
 #[pyo3(signature = (*, topic=None, refresh_interval=None, context=None))]
 pub fn start_sysinfo_publisher(
+    py: Python<'_>,
     topic: Option<String>,
     refresh_interval: Option<f64>,
     context: Option<PyRef<PyContext>>,
 ) -> PyResult<PySystemInfoPublisher> {
+    init_logging(py, None);
+
     let mut builder = SystemInfoPublisher::new();
 
     if let Some(topic) = topic {
