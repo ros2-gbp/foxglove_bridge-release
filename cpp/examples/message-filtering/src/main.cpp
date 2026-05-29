@@ -13,7 +13,7 @@
 #include <foxglove/foxglove.hpp>
 #include <foxglove/mcap.hpp>
 #include <foxglove/messages.hpp>
-#include <foxglove/server.hpp>
+#include <foxglove/websocket.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -151,7 +151,7 @@ int main() {
     }
   });
 
-  foxglove::setLogLevel(foxglove::LogLevel::Debug);
+  foxglove::setLogLevel(foxglove::LogLevel::Info);
 
   // Create channels for different message types
   auto info_channel_result = foxglove::RawChannel::create("/info", "json", std::nullopt);

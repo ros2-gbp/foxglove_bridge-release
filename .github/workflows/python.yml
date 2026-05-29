@@ -194,57 +194,71 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             manylinux: "2_28"
-            extra-args: --features pyo3/extension-module,remote-access
+            extra-args: --features pyo3/extension-module,remote-access,require-cuda
             before-script: |
               if command -v apt-get; then
                 apt-get update
-                apt-get install -y libva-dev
+                apt-get install -y libva-dev nvidia-cuda-dev
+                ln -snf /usr /usr/local/cuda
               elif command -v yum; then
-                yum install -y libva-devel
+                yum install -y libva-devel yum-utils
+                arch=$(uname -m)
+                case "$arch" in
+                  aarch64) cuda_arch=sbsa ;;
+                  *) cuda_arch="$arch" ;;
+                esac
+                yum-config-manager --add-repo "https://developer.download.nvidia.com/compute/cuda/repos/rhel8/${cuda_arch}/cuda-rhel8.repo"
+                yum install -y cuda-cudart-devel-12-6 cuda-driver-devel-12-6
+                ln -snf /usr/local/cuda-12.6 /usr/local/cuda
               else
                 echo "No supported package manager found"
                 exit 1
               fi
             artifact-suffix: "-2_28"
+            test: true
+            remote_access: true
           - runner: ubuntu-22.04
             target: x86_64
             manylinux: auto
             artifact-suffix: ""
-          - runner: ubuntu-22.04
-            target: x86
-            manylinux: auto
-            artifact-suffix: ""
+            test: true
           - runner: ubuntu-22.04-arm
             target: aarch64
             manylinux: "2_28"
-            extra-args: --features pyo3/extension-module,remote-access
+            extra-args: --features pyo3/extension-module,remote-access,require-cuda
             before-script: |
               if command -v apt-get; then
                 apt-get update
-                apt-get install -y libva-dev
+                apt-get install -y libva-dev nvidia-cuda-dev
+                ln -snf /usr /usr/local/cuda
               elif command -v yum; then
-                yum install -y libva-devel
+                yum install -y libva-devel yum-utils
+                arch=$(uname -m)
+                case "$arch" in
+                  aarch64) cuda_arch=sbsa ;;
+                  *) cuda_arch="$arch" ;;
+                esac
+                yum-config-manager --add-repo "https://developer.download.nvidia.com/compute/cuda/repos/rhel8/${cuda_arch}/cuda-rhel8.repo"
+                yum install -y cuda-cudart-devel-12-6 cuda-driver-devel-12-6
+                ln -snf /usr/local/cuda-12.6 /usr/local/cuda
               else
                 echo "No supported package manager found"
                 exit 1
               fi
             artifact-suffix: "-2_28"
+            test: true
+            remote_access: true
           - runner: ubuntu-22.04-arm
             target: aarch64
             manylinux: auto
             artifact-suffix: ""
+            test: true
           - runner: ubuntu-22.04
             target: armv7
             manylinux: auto
             artifact-suffix: ""
-          - runner: ubuntu-22.04
-            target: s390x
-            manylinux: auto
-            artifact-suffix: ""
-          - runner: ubuntu-22.04
-            target: ppc64le
-            manylinux: auto
-            artifact-suffix: ""
+            # No native armv7 runner; qemu emulation is too slow for CI.
+            test: false
     steps:
       - uses: actions/setup-python@v6
         with:
@@ -259,7 +273,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter ${{ matrix.platform.extra-args }}
+          args: --release --out dist -i python3.10 ${{ matrix.platform.extra-args }}
           sccache: "false"
           manylinux: ${{ matrix.platform.manylinux }}
           before-script-linux: ${{ matrix.platform.before-script }}
@@ -269,6 +283,22 @@ jobs:
         with:
           name: wheels-linux-${{ matrix.platform.target }}${{ matrix.platform.artifact-suffix }}
           path: dist
+      - name: Test wheel
+        if: matrix.platform.test
+        shell: bash
+        env:
+          FOXGLOVE_TEST_REQUIRE_REMOTE_ACCESS: ${{ matrix.platform.remote_access && '1' || '0' }}
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python -m pip install pytest mcap
+          # Run pytest from a directory that doesn't contain the local source
+          # tree, so it exercises the installed wheel rather than ./python/foxglove.
+          mkdir wheel-test
+          cp -r python/foxglove/tests wheel-test/
+          cd wheel-test
+          python -m pytest -v tests
 
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
@@ -279,12 +309,16 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
-          - runner: ubuntu-22.04
-            target: x86
+            # Native x86_64 musl can be tested inside an Alpine container.
+            test: true
           - runner: ubuntu-22.04
             target: aarch64
+            # No native aarch64 musl runner; qemu emulation is too slow for CI.
+            test: false
           - runner: ubuntu-22.04
             target: armv7
+            # No native armv7 musl runner; qemu emulation is too slow for CI.
+            test: false
     steps:
       - uses: actions/setup-python@v6
         with:
@@ -299,7 +333,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist -i python3.10
           sccache: "false"
           manylinux: musllinux_1_2
           docker-options: "--env MATURIN_NO_MISSING_BUILD_BACKEND_WARNING=1"
@@ -308,6 +342,25 @@ jobs:
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
+      - name: Test wheel
+        if: matrix.platform.test
+        env:
+          FOXGLOVE_TEST_REQUIRE_REMOTE_ACCESS: ${{ matrix.platform.remote_access && '1' || '0' }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/io" -w /io \
+            -e FOXGLOVE_TEST_REQUIRE_REMOTE_ACCESS \
+            python:3.10-alpine sh -euxc '
+              # gcc + musl-dev are needed to build the lz4 sdist; lz4 (a
+              # transitive mcap dep) ships no cp310 musllinux wheel.
+              apk add --no-cache gcc musl-dev
+              pip install dist/*.whl
+              pip install pytest mcap
+              mkdir wheel-test
+              cp -r python/foxglove/tests wheel-test/
+              cd wheel-test
+              pytest -v tests
+            '
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
@@ -319,6 +372,7 @@ jobs:
           - runner: windows-latest
             target: x86_64
             extra-args: --features pyo3/extension-module,remote-access
+            remote_access: true
           - runner: windows-latest
             target: x86
     steps:
@@ -332,12 +386,7 @@ jobs:
         if: ${{ matrix.platform.target == 'x86' }}
         with:
           architecture: x86
-          python-version: |
-            3.14
-            3.13
-            3.12
-            3.11
-            3.10
+          python-version: "3.10"
 
       - name: Install NASM
         if: ${{ matrix.platform.target == 'x86_64' }}
@@ -354,7 +403,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter ${{ matrix.platform.extra-args }}
+          args: --release --out dist -i python3.10 ${{ matrix.platform.extra-args }}
           sccache: "false"
           docker-options: "--env MATURIN_NO_MISSING_BUILD_BACKEND_WARNING=1"
         env:
@@ -364,6 +413,19 @@ jobs:
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
+      - name: Test wheel
+        shell: bash
+        env:
+          FOXGLOVE_TEST_REQUIRE_REMOTE_ACCESS: ${{ matrix.platform.remote_access && '1' || '0' }}
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python -m pip install pytest mcap
+          mkdir wheel-test
+          cp -r python/foxglove/tests wheel-test/
+          cd wheel-test
+          python -m pytest -v tests
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
@@ -375,9 +437,11 @@ jobs:
           - runner: macos-15
             target: aarch64
             extra-args: --features pyo3/extension-module,remote-access
+            remote_access: true
           - runner: macos-15-intel
             target: x86_64
             extra-args: --features pyo3/extension-module,remote-access
+            remote_access: true
     steps:
       - uses: actions/setup-python@v6
         with:
@@ -392,7 +456,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter ${{ matrix.platform.extra-args }}
+          args: --release --out dist -i python3.10 ${{ matrix.platform.extra-args }}
           sccache: "false"
           docker-options: "--env MATURIN_NO_MISSING_BUILD_BACKEND_WARNING=1"
       - name: Upload wheels
@@ -400,6 +464,19 @@ jobs:
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
+      - name: Test wheel
+        shell: bash
+        env:
+          FOXGLOVE_TEST_REQUIRE_REMOTE_ACCESS: ${{ matrix.platform.remote_access && '1' || '0' }}
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python -m pip install pytest mcap
+          mkdir wheel-test
+          cp -r python/foxglove/tests wheel-test/
+          cd wheel-test
+          python -m pytest -v tests
 
   sdist:
     runs-on: ubuntu-latest

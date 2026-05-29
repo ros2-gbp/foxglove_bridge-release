@@ -21,10 +21,14 @@ mod channel_descriptor;
 mod connection_graph;
 #[cfg(not(target_family = "wasm"))]
 mod fetch_asset;
+#[cfg(feature = "remote-access")]
+mod gateway;
 #[cfg(not(target_family = "wasm"))]
 mod logging;
 #[cfg(not(target_family = "wasm"))]
 mod parameter;
+#[cfg(not(target_family = "wasm"))]
+mod parameter_handler;
 #[cfg(not(target_family = "wasm"))]
 mod playback_control_request;
 #[cfg(not(target_family = "wasm"))]
@@ -35,12 +39,17 @@ mod server;
 mod service;
 #[cfg(not(target_family = "wasm"))]
 mod sink_channel_filter;
+#[cfg(not(target_family = "wasm"))]
+mod system_info;
 
 #[cfg(not(target_family = "wasm"))]
 pub use server::*;
 
 #[cfg(not(target_family = "wasm"))]
 pub use channel::*;
+
+#[cfg(not(target_family = "wasm"))]
+pub use system_info::*;
 
 #[cfg(not(target_family = "wasm"))]
 pub use logging::foxglove_set_log_level;
@@ -214,8 +223,8 @@ impl FoxgloveSchema {
     /// Converts a schema to the native type.
     ///
     /// # Safety
-    /// - `name` must be a valid pointer to a UTF-8 string.
-    /// - `encoding` must be a valid pointer to a UTF-8 string.
+    /// - `name` must be a valid UTF-8 string.
+    /// - `encoding` must be a valid UTF-8 string.
     /// - `data` must be a valid pointer to a buffer of `data_len` bytes.
     unsafe fn to_native(&self) -> Result<foxglove::Schema, foxglove::FoxgloveError> {
         let name = unsafe { self.name.as_utf8_str() }
@@ -267,6 +276,7 @@ pub enum FoxgloveError {
     EncodeError,
     BufferTooShort,
     Base64DecodeError,
+    ConfigurationError,
 }
 
 impl From<foxglove::FoxgloveError> for FoxgloveError {
@@ -292,6 +302,7 @@ impl From<foxglove::FoxgloveError> for FoxgloveError {
             foxglove::FoxgloveError::IoError(_) => FoxgloveError::IoError,
             foxglove::FoxgloveError::McapError(_) => FoxgloveError::McapError,
             foxglove::FoxgloveError::EncodeError(_) => FoxgloveError::EncodeError,
+            foxglove::FoxgloveError::ConfigurationError(_) => FoxgloveError::ConfigurationError,
             _ => FoxgloveError::Unspecified,
         }
     }
@@ -317,6 +328,7 @@ impl FoxgloveError {
             FoxgloveError::EncodeError => c"Encode Error",
             FoxgloveError::BufferTooShort => c"Buffer too short",
             FoxgloveError::Base64DecodeError => c"Base64 decode error",
+            FoxgloveError::ConfigurationError => c"Configuration Error",
             FoxgloveError::Unspecified => c"Unspecified Error",
         }
     }

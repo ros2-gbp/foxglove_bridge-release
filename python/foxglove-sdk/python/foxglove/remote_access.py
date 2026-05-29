@@ -2,20 +2,26 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from foxglove import ChannelDescriptor
-
-from ._foxglove_py.remote_access import (
-    Capability,
-    Client,
+from foxglove import (
+    ChannelDescriptor,
+    ConnectionGraph,
     MessageSchema,
     Parameter,
     ParameterType,
     ParameterValue,
-    RemoteAccessConnectionStatus,
-    RemoteAccessGateway,
     Service,
     ServiceRequest,
     ServiceSchema,
+    StatusLevel,
+)
+
+from ._foxglove_py.remote_access import (
+    Capability,
+    Client,
+    QosProfile,
+    Reliability,
+    RemoteAccessConnectionStatus,
+    RemoteAccessGateway,
 )
 
 
@@ -46,6 +52,7 @@ class RemoteAccessListener(Protocol):
     def on_unsubscribe(self, client: Client, channel: ChannelDescriptor) -> None:
         """
         Called when a client unsubscribes from a channel or disconnects.
+        Also called when a subscribed channel is removed from the :class:`~foxglove.Context`.
 
         :param client: The client that unsubscribed.
         :param channel: The channel that was unsubscribed from.
@@ -95,7 +102,7 @@ class RemoteAccessListener(Protocol):
 
         :param client: The client that sent the request.
         :param param_names: The names of the parameters to get.
-        :param request_id: An optional request id.
+        :param request_id: An optional request ID.
         """
         return []
 
@@ -112,7 +119,7 @@ class RemoteAccessListener(Protocol):
 
         :param client: The client that sent the request.
         :param parameters: The parameters to set.
-        :param request_id: An optional request id.
+        :param request_id: An optional request ID.
         """
         return parameters
 
@@ -136,18 +143,48 @@ class RemoteAccessListener(Protocol):
         """
         return None
 
+    def on_connection_graph_subscribe(self) -> None:
+        """
+        Called when the first client subscribes to the connection graph.
+
+        Requires :py:data:`Capability.ConnectionGraph`.
+
+        .. warning::
+            Do not call
+            :py:meth:`~foxglove.remote_access.RemoteAccessGateway.publish_connection_graph`
+            from within this callback; doing so will deadlock.
+        """
+        return None
+
+    def on_connection_graph_unsubscribe(self) -> None:
+        """
+        Called when the last client unsubscribes from the connection graph.
+
+        Requires :py:data:`Capability.ConnectionGraph`.
+
+        .. warning::
+            Do not call
+            :py:meth:`~foxglove.remote_access.RemoteAccessGateway.publish_connection_graph`
+            from within this callback; doing so will deadlock.
+        """
+        return None
+
 
 __all__ = [
     "Capability",
     "Client",
+    "ConnectionGraph",
     "MessageSchema",
     "Parameter",
     "ParameterType",
     "ParameterValue",
+    "QosProfile",
+    "Reliability",
     "RemoteAccessConnectionStatus",
     "RemoteAccessGateway",
     "RemoteAccessListener",
     "Service",
     "ServiceRequest",
     "ServiceSchema",
+    "StatusLevel",
 ]

@@ -1,6 +1,6 @@
 #include <foxglove/channel.hpp>
 #include <foxglove/foxglove.hpp>
-#include <foxglove/server.hpp>
+#include <foxglove/websocket.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -23,7 +23,7 @@ int main() {
     }
   });
 
-  foxglove::setLogLevel(foxglove::LogLevel::Debug);
+  foxglove::setLogLevel(foxglove::LogLevel::Info);
 
   foxglove::WebSocketServerOptions options = {};
   options.name = "ws-demo-cpp";

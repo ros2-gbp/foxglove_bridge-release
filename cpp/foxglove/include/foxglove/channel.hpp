@@ -14,9 +14,6 @@
 #include <string>
 #include <type_traits>
 
-struct foxglove_channel;
-struct foxglove_channel_descriptor;
-
 /// The foxglove namespace.
 namespace foxglove {
 
@@ -30,6 +27,9 @@ public:
   /// @brief Information about a channel. This is constructed internally.
   explicit ChannelDescriptor(const foxglove_channel_descriptor* channel_descriptor);
   /// @endcond
+
+  /// @brief Get the ID of the channel descriptor.
+  [[nodiscard]] uint64_t id() const noexcept;
 
   /// @brief Get the topic of the channel descriptor.
   [[nodiscard]] std::string_view topic() const noexcept;
@@ -132,7 +132,11 @@ public:
   /// @note Logging is thread-safe. The data will be logged atomically
   /// before or after data logged from other threads.
   ///
-  /// @param data The message data.
+  /// Zero-length messages are supported: pass `data_len == 0` with either a null `data`
+  /// pointer or any non-null pointer. The contents of `data` are not read when
+  /// `data_len == 0`.
+  ///
+  /// @param data The message data. May be null when `data_len == 0`.
   /// @param data_len The length of the message data, in bytes.
   /// @param log_time The timestamp of the message, as nanoseconds since epoch. If omitted, the
   /// current time is used.

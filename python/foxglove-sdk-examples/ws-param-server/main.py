@@ -1,5 +1,5 @@
 """
-This implements a parameter server for live visualization.
+This implements a parameter server for the WebSocket server.
 
 View and edit parameters from a Parameters panel in Foxglove:
 https://docs.foxglove.dev/docs/visualization/panels/parameters
@@ -63,7 +63,7 @@ class ParameterStore(foxglove.websocket.ServerListener):
 
 
 def main() -> None:
-    foxglove.set_log_level(logging.DEBUG)
+    foxglove.set_log_level("INFO")
 
     initial_values: list[Parameter] = [
         Parameter("p0"),

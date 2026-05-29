@@ -1,7 +1,8 @@
+from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Protocol
 
-from foxglove.websocket import AssetHandler
+from foxglove import AnyNativeParameterValue, AnyParameterValue, AssetHandler
 
 class McapWritable(Protocol):
     """A writable and seekable file-like object.
@@ -24,10 +25,12 @@ class McapWritable(Protocol):
 from .mcap import MCAPWriteOptions, MCAPWriter
 from .remote_access import Capability as RemoteAccessCapability
 from .remote_access import (
+    QosProfile,
     RemoteAccessConnectionStatus,
     RemoteAccessGateway,
 )
-from .websocket import Capability, Service, WebSocketServer
+from .websocket import Capability as WebSocketCapability
+from .websocket import WebSocketServer
 
 class BaseChannel:
     """
@@ -158,6 +161,209 @@ class ChannelDescriptor:
 
 SinkChannelFilter = Callable[[ChannelDescriptor], bool]
 
+class ConnectionGraph:
+    """
+    A graph of connections between clients.
+    """
+
+    def __init__(self) -> None: ...
+    def set_published_topic(self, topic: str, publisher_ids: list[str]) -> None:
+        """
+        Set a published topic and its associated publisher IDs. Overwrites any existing topic with
+        the same name.
+
+        :param topic: The topic name.
+        :param publisher_ids: The set of publisher IDs.
+        """
+        ...
+
+    def set_subscribed_topic(self, topic: str, subscriber_ids: list[str]) -> None:
+        """
+        Set a subscribed topic and its associated subscriber IDs. Overwrites any existing topic with
+        the same name.
+
+        :param topic: The topic name.
+        :param subscriber_ids: The set of subscriber IDs.
+        """
+        ...
+
+    def set_advertised_service(self, service: str, provider_ids: list[str]) -> None:
+        """
+        Set an advertised service and its associated provider IDs. Overwrites any existing service
+        with the same name.
+
+        :param service: The service name.
+        :param provider_ids: The set of provider IDs.
+        """
+        ...
+
+class MessageSchema:
+    """
+    A service request or response schema.
+    """
+
+    encoding: str
+    schema: Schema
+
+    def __init__(
+        self,
+        *,
+        encoding: str,
+        schema: Schema,
+    ) -> None: ...
+
+class Parameter:
+    """
+    A parameter which can be sent to a client.
+
+    :param name: The parameter name.
+    :type name: str
+    :param value: Optional value, represented as a native python object, or a ParameterValue.
+    :type value: None|bool|int|float|str|bytes|list|dict|ParameterValue
+    :param type: Optional parameter type. This is automatically derived when passing a native
+                 python object as the value.
+    :type type: ParameterType|None
+    """
+
+    name: str
+    type: ParameterType | None
+    value: AnyParameterValue | None
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        value: AnyNativeParameterValue | None = None,
+        type: ParameterType | None = None,
+    ) -> None: ...
+    def get_value(self) -> AnyNativeParameterValue | None:
+        """Returns the parameter value as a native python object."""
+        ...
+
+class ParameterType(Enum):
+    """
+    An optional type hint for a :py:class:`Parameter`, used to disambiguate values whose
+    intended type cannot be inferred from the wire representation alone.
+
+    A parameter's type is typically derived directly from its value: integers, booleans,
+    strings, dicts, and homogeneous arrays of these are unambiguous on the wire. This enum
+    only enumerates the cases that need an explicit hint:
+
+    - :py:attr:`ParameterType.ByteArray`: a byte array is transmitted as a base64-encoded
+      string, so without a type hint it would be indistinguishable from an ordinary string.
+    - :py:attr:`ParameterType.Float64`: a whole-valued float (e.g. ``1.0``) may be
+      indistinguishable from an integer on the wire; the hint preserves the intended
+      floating-point type.
+    - :py:attr:`ParameterType.Float64Array`: same rationale as ``Float64``, for arrays.
+
+    Parameters of other types (integer, bool, string, dict, arrays of these) leave
+    :py:attr:`Parameter.type` set to ``None``.
+    """
+
+    ByteArray = ...
+    """A byte array, transmitted on the wire as a base64-encoded string. The type hint
+    distinguishes it from an ordinary string value."""
+
+    Float64 = ...
+    """A floating-point value that can be represented as a ``float64``. Used to preserve the
+    floating-point type for whole-valued numbers that would otherwise round-trip as integers."""
+
+    Float64Array = ...
+    """An array of floating-point values that can be represented as ``float64``s. Used to
+    preserve the floating-point type for arrays of whole-valued numbers."""
+
+class ParameterValue:
+    """
+    A parameter value.
+    """
+
+    class Integer:
+        """An integer value."""
+
+        def __init__(self, value: int) -> None: ...
+
+    class Bool:
+        """A boolean value."""
+
+        def __init__(self, value: bool) -> None: ...
+
+    class Float64:
+        """A floating-point value."""
+
+        def __init__(self, value: float) -> None: ...
+
+    class String:
+        """
+        A string value.
+
+        For parameters of type :py:attr:`ParameterType.ByteArray`, this is a
+        base64 encoding of the byte array.
+        """
+
+        def __init__(self, value: str) -> None: ...
+
+    class Array:
+        """An array of parameter values."""
+
+        def __init__(self, value: list[AnyParameterValue]) -> None: ...
+
+    class Dict:
+        """An associative map of parameter values."""
+
+        def __init__(self, value: dict[str, AnyParameterValue]) -> None: ...
+
+class Service:
+    """
+    A service.
+    """
+
+    name: str
+    schema: ServiceSchema
+    handler: Callable[[ServiceRequest], bytes]
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        schema: ServiceSchema,
+        handler: Callable[[ServiceRequest], bytes],
+    ): ...
+
+class ServiceRequest:
+    """
+    A service request.
+    """
+
+    service_name: str
+    client_id: int
+    call_id: int
+    encoding: str
+    payload: bytes
+
+class ServiceSchema:
+    """
+    A service schema.
+    """
+
+    name: str
+    request: MessageSchema | None
+    response: MessageSchema | None
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        request: MessageSchema | None = None,
+        response: MessageSchema | None = None,
+    ): ...
+
+class StatusLevel(Enum):
+    """A status message severity level"""
+
+    Info = ...
+    Warning = ...
+    Error = ...
+
 def start_gateway(
     *,
     name: str | None = None,
@@ -168,6 +374,7 @@ def start_gateway(
     services: list[Service] | None = None,
     context: Context | None = None,
     channel_filter: SinkChannelFilter | None = None,
+    qos_classifier: Callable[[ChannelDescriptor], QosProfile] | None = None,
     message_backlog_size: int | None = None,
     foxglove_api_url: str | None = None,
     foxglove_api_timeout: float | None = None,
@@ -182,7 +389,7 @@ def start_server(
     name: str | None = None,
     host: str | None = "127.0.0.1",
     port: int | None = 8765,
-    capabilities: list[Capability] | None = None,
+    capabilities: list[WebSocketCapability] | None = None,
     server_listener: Any = None,
     supported_encodings: list[str] | None = None,
     services: list[Service] | None = None,
@@ -191,9 +398,44 @@ def start_server(
     session_id: str | None = None,
     channel_filter: SinkChannelFilter | None = None,
     playback_time_range: tuple[int, int] | None = None,
+    message_backlog_size: int | None = None,
 ) -> WebSocketServer:
     """
-    Start a websocket server for live visualization.
+    Start a WebSocket server for live visualization.
+    """
+    ...
+
+class SystemInfoPublisher:
+    """
+    A handle to a running system info publisher.
+
+    The publisher is started by :py:func:`foxglove.start_sysinfo_publisher` and runs in
+    the background until :py:meth:`stop` is called.
+    The caller is responsible for calling stop() when done; dropping the handle does not stop the background task.
+    """
+
+    def stop(self) -> None:
+        """
+        Stop the publisher. Subsequent calls to ``stop`` are no-ops.
+        """
+        ...
+
+def start_sysinfo_publisher(
+    *,
+    topic: str | None = None,
+    refresh_interval: float | None = None,
+    context: Context | None = None,
+) -> SystemInfoPublisher:
+    """
+    Start the system info publisher.
+
+    Periodically publishes process and system statistics (memory, CPU, OS info) to a channel.
+
+    The caller is responsible for calling stop() on the returned handle when done; dropping the handle does not stop the background task.
+
+    :param topic: Channel topic name. Defaults to ``/sysinfo``.
+    :param refresh_interval: How often to publish, in seconds. Defaults to ``0.5``. Clamped to a minimum of 0.2.
+    :param context: The context on which the publisher creates its channel. Defaults to the global default context.
     """
     ...
 
@@ -211,7 +453,7 @@ def disable_logging() -> None:
 
 def shutdown() -> None:
     """
-    Shutdown the running websocket server.
+    Shutdown the running WebSocket server.
     """
     ...
 

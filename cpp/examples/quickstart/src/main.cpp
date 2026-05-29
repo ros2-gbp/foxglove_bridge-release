@@ -4,7 +4,7 @@
 #include <foxglove/foxglove.hpp>
 #include <foxglove/mcap.hpp>
 #include <foxglove/messages.hpp>
-#include <foxglove/server.hpp>
+#include <foxglove/websocket.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -17,7 +17,7 @@
 using namespace std::chrono_literals;
 
 int main() {
-  foxglove::setLogLevel(foxglove::LogLevel::Debug);
+  foxglove::setLogLevel(foxglove::LogLevel::Info);
 
   static std::function<void()> sigint_handler;
 

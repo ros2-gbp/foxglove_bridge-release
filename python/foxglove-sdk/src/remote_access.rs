@@ -3,18 +3,17 @@ use std::time::Duration;
 
 use foxglove::ChannelDescriptor;
 use foxglove::remote_access::{
-    self, Capability, ConnectionStatus, Gateway, GatewayHandle, Listener,
+    self, Capability, ConnectionStatus, Gateway, GatewayHandle, Listener, QosProfile, Reliability,
+    Status,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::PyContext;
 use crate::errors::PyFoxgloveError;
+use crate::logging::init_logging;
+use crate::remote_common::{PyConnectionGraph, PyParameter, PyService, PyStatusLevel};
 use crate::sink_channel_filter::{PyChannelDescriptor, PySinkChannelFilter};
-use crate::websocket::{
-    PyMessageSchema, PyParameter, PyParameterType, PyParameterValue, PyService, PyServiceRequest,
-    PyServiceSchema,
-};
 
 /// A client connected to a running remote access gateway.
 #[pyclass(name = "Client", module = "foxglove.remote_access")]
@@ -30,8 +29,8 @@ impl PyRemoteAccessClient {
     }
 }
 
-impl From<remote_access::Client> for PyRemoteAccessClient {
-    fn from(value: remote_access::Client) -> Self {
+impl From<&remote_access::Client> for PyRemoteAccessClient {
+    fn from(value: &remote_access::Client) -> Self {
         Self {
             id: value.id().into(),
         }
@@ -58,6 +57,29 @@ pub enum PyConnectionStatus {
     Shutdown = 3,
 }
 
+#[pymethods]
+impl PyConnectionStatus {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Connecting => "Connecting",
+            Self::Connected => "Connected",
+            Self::ShuttingDown => "ShuttingDown",
+            Self::Shutdown => "Shutdown",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Connecting => 0,
+            Self::Connected => 1,
+            Self::ShuttingDown => 2,
+            Self::Shutdown => 3,
+        }
+    }
+}
+
 impl From<ConnectionStatus> for PyConnectionStatus {
     fn from(value: ConnectionStatus) -> Self {
         match value {
@@ -75,16 +97,42 @@ impl From<ConnectionStatus> for PyConnectionStatus {
 pub enum PyRemoteAccessCapability {
     /// Allow clients to advertise channels to send data messages to the server.
     ClientPublish,
+    /// Allow clients to subscribe to connection graph updates.
+    ConnectionGraph,
     /// Allow clients to get, set, and subscribe to parameter updates.
     Parameters,
     /// Allow clients to call services.
     Services,
 }
 
+#[pymethods]
+impl PyRemoteAccessCapability {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ClientPublish => "ClientPublish",
+            Self::ConnectionGraph => "ConnectionGraph",
+            Self::Parameters => "Parameters",
+            Self::Services => "Services",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::ClientPublish => 0,
+            Self::ConnectionGraph => 1,
+            Self::Parameters => 2,
+            Self::Services => 3,
+        }
+    }
+}
+
 impl From<PyRemoteAccessCapability> for Capability {
     fn from(value: PyRemoteAccessCapability) -> Self {
         match value {
             PyRemoteAccessCapability::ClientPublish => Capability::ClientPublish,
+            PyRemoteAccessCapability::ConnectionGraph => Capability::ConnectionGraph,
             PyRemoteAccessCapability::Parameters => Capability::Parameters,
             PyRemoteAccessCapability::Services => Capability::Services,
         }
@@ -114,25 +162,25 @@ impl Listener for PyRemoteAccessListener {
         }
     }
 
-    fn on_subscribe(&self, client: remote_access::Client, channel: &ChannelDescriptor) {
+    fn on_subscribe(&self, client: &remote_access::Client, channel: &ChannelDescriptor) {
         self.call_client_channel_method("on_subscribe", client, channel);
     }
 
-    fn on_unsubscribe(&self, client: remote_access::Client, channel: &ChannelDescriptor) {
+    fn on_unsubscribe(&self, client: &remote_access::Client, channel: &ChannelDescriptor) {
         self.call_client_channel_method("on_unsubscribe", client, channel);
     }
 
-    fn on_client_advertise(&self, client: remote_access::Client, channel: &ChannelDescriptor) {
+    fn on_client_advertise(&self, client: &remote_access::Client, channel: &ChannelDescriptor) {
         self.call_client_channel_method("on_client_advertise", client, channel);
     }
 
-    fn on_client_unadvertise(&self, client: remote_access::Client, channel: &ChannelDescriptor) {
+    fn on_client_unadvertise(&self, client: &remote_access::Client, channel: &ChannelDescriptor) {
         self.call_client_channel_method("on_client_unadvertise", client, channel);
     }
 
     fn on_message_data(
         &self,
-        client: remote_access::Client,
+        client: &remote_access::Client,
         channel: &ChannelDescriptor,
         payload: &[u8],
     ) {
@@ -154,7 +202,7 @@ impl Listener for PyRemoteAccessListener {
 
     fn on_get_parameters(
         &self,
-        client: remote_access::Client,
+        client: &remote_access::Client,
         param_names: Vec<String>,
         request_id: Option<&str>,
     ) -> Vec<foxglove::remote_access::Parameter> {
@@ -179,7 +227,7 @@ impl Listener for PyRemoteAccessListener {
 
     fn on_set_parameters(
         &self,
-        client: remote_access::Client,
+        client: &remote_access::Client,
         parameters: Vec<foxglove::remote_access::Parameter>,
         request_id: Option<&str>,
     ) -> Vec<foxglove::remote_access::Parameter> {
@@ -228,13 +276,37 @@ impl Listener for PyRemoteAccessListener {
             tracing::error!("Callback failed: {}", err);
         }
     }
+
+    fn on_connection_graph_subscribe(&self) {
+        let result: PyResult<()> = Python::with_gil(|py| {
+            self.listener
+                .bind(py)
+                .call_method("on_connection_graph_subscribe", (), None)?;
+            Ok(())
+        });
+        if let Err(err) = result {
+            tracing::error!("Callback failed: {}", err);
+        }
+    }
+
+    fn on_connection_graph_unsubscribe(&self) {
+        let result: PyResult<()> = Python::with_gil(|py| {
+            self.listener
+                .bind(py)
+                .call_method("on_connection_graph_unsubscribe", (), None)?;
+            Ok(())
+        });
+        if let Err(err) = result {
+            tracing::error!("Callback failed: {}", err);
+        }
+    }
 }
 
 impl PyRemoteAccessListener {
     fn call_client_channel_method(
         &self,
         method_name: &str,
-        client: remote_access::Client,
+        client: &remote_access::Client,
         channel: &ChannelDescriptor,
     ) {
         let py_client = PyRemoteAccessClient::from(client);
@@ -269,7 +341,15 @@ impl PyRemoteAccessGateway {
 
     /// Advertises support for the provided services.
     ///
+    /// These services will be available for clients to use until they are removed with
+    /// :py:meth:`remove_services`.
+    ///
+    /// This method will fail if the server was not configured with :py:attr:`Capability.Services`,
+    /// if a service name is not unique, or if a service has no request encoding and the server
+    /// has no supported encodings.
+    ///
     /// :param services: Services to add.
+    /// :type services: list[Service]
     pub fn add_services(&self, py: Python<'_>, services: Vec<PyService>) -> PyResult<()> {
         if let Some(handle) = &self.0 {
             py.allow_threads(move || {
@@ -284,6 +364,7 @@ impl PyRemoteAccessGateway {
     /// Removes services that were previously advertised.
     ///
     /// :param names: Names of services to remove.
+    /// :type names: list[str]
     pub fn remove_services(&self, py: Python<'_>, names: Vec<String>) {
         if let Some(handle) = &self.0 {
             py.allow_threads(move || handle.remove_services(names));
@@ -293,11 +374,60 @@ impl PyRemoteAccessGateway {
     /// Publishes parameter values to all subscribed clients.
     ///
     /// :param parameters: The parameters to publish.
-    /// :type parameters: list[:py:class:`Parameter`]
+    /// :type parameters: list[Parameter]
     pub fn publish_parameter_values(&self, parameters: Vec<PyParameter>) {
         if let Some(handle) = &self.0 {
             handle.publish_parameter_values(parameters.into_iter().map(Into::into).collect());
         }
+    }
+
+    /// Send a status message to all connected participants.
+    ///
+    /// :param message: The message to send.
+    /// :type message: str
+    /// :param level: The level of the status message.
+    /// :type level: StatusLevel
+    /// :param id: An optional ID for the status message.
+    /// :type id: str | None
+    #[pyo3(signature = (message, level, id=None))]
+    pub fn publish_status(&self, message: String, level: &PyStatusLevel, id: Option<String>) {
+        if let Some(handle) = &self.0 {
+            let status = match id {
+                Some(id) => Status::new(level.clone().into(), message).with_id(id),
+                None => Status::new(level.clone().into(), message),
+            };
+            handle.publish_status(status);
+        }
+    }
+
+    /// Remove status messages by ID from all connected participants.
+    ///
+    /// :param ids: The IDs of the status messages to remove.
+    /// :type ids: list[str]
+    pub fn remove_status(&self, ids: Vec<String>) {
+        if let Some(handle) = &self.0 {
+            handle.remove_status(ids);
+        }
+    }
+
+    /// Publishes a connection graph update to all subscribed clients. An update is published to
+    /// clients as a difference from the current graph to the replacement graph. When a client first
+    /// subscribes to connection graph updates, it receives the current graph.
+    ///
+    /// Raises an error if the gateway wasn't started with Capability.ConnectionGraph.
+    ///
+    /// :param graph: The connection graph to publish.
+    /// :type graph: ConnectionGraph
+    pub fn publish_connection_graph(&self, graph: Bound<'_, PyConnectionGraph>) -> PyResult<()> {
+        let Some(handle) = &self.0 else {
+            tracing::debug!("publish_connection_graph called after gateway stopped; ignoring");
+            return Ok(());
+        };
+        let graph = graph.extract::<PyConnectionGraph>()?;
+        handle
+            .publish_connection_graph(graph.into())
+            .map_err(PyFoxgloveError::from)
+            .map_err(PyErr::from)
     }
 
     /// Gracefully disconnect from the remote access gateway.
@@ -308,9 +438,98 @@ impl PyRemoteAccessGateway {
     }
 }
 
+/// The reliability policy for a channel's data delivery.
+#[pyclass(name = "Reliability", module = "foxglove.remote_access", eq, eq_int)]
+#[derive(Clone, PartialEq)]
+pub enum PyReliability {
+    /// Data is sent over unreliable data tracks. This is the default.
+    Lossy,
+    /// Data is sent over the reliable control channel (ordered, guaranteed delivery).
+    Reliable,
+}
+
+#[pymethods]
+impl PyReliability {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Lossy => "Lossy",
+            Self::Reliable => "Reliable",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Lossy => 0,
+            Self::Reliable => 1,
+        }
+    }
+}
+
+impl From<PyReliability> for Reliability {
+    fn from(value: PyReliability) -> Self {
+        match value {
+            PyReliability::Lossy => Reliability::Lossy,
+            PyReliability::Reliable => Reliability::Reliable,
+        }
+    }
+}
+
+/// Quality-of-service profile for a channel.
+#[pyclass(name = "QosProfile", module = "foxglove.remote_access")]
+#[derive(Clone)]
+pub struct PyQosProfile {
+    #[pyo3(get, set)]
+    pub reliability: PyReliability,
+}
+
+#[pymethods]
+impl PyQosProfile {
+    #[new]
+    #[pyo3(signature = (*, reliability=PyReliability::Lossy))]
+    fn new(reliability: PyReliability) -> Self {
+        Self { reliability }
+    }
+}
+
+impl From<PyQosProfile> for QosProfile {
+    fn from(value: PyQosProfile) -> Self {
+        QosProfile::builder()
+            .reliability(value.reliability.into())
+            .build()
+    }
+}
+
+/// A QoS classifier wrapping a Python callable.
+///
+/// The callable should accept a `ChannelDescriptor` and return a `QosProfile`.
+pub struct PyQosClassifier(pub Py<PyAny>);
+
+impl foxglove::remote_access::QosClassifier for PyQosClassifier {
+    fn classify(&self, channel: &foxglove::ChannelDescriptor) -> QosProfile {
+        Python::with_gil(|py| {
+            let handler = self.0.clone_ref(py);
+            let descriptor = PyChannelDescriptor(channel.clone());
+            let result = handler
+                .bind(py)
+                .call((descriptor,), None)
+                .and_then(|f| f.extract::<PyQosProfile>());
+
+            match result {
+                Ok(profile) => profile.into(),
+                Err(err) => {
+                    tracing::error!("Error in QoS classifier: {}", err.to_string());
+                    QosProfile::default()
+                }
+            }
+        })
+    }
+}
+
 /// Start a remote access gateway for live visualization and teleop in Foxglove.
 #[pyfunction]
-#[pyo3(signature = (*, name=None, device_token=None, capabilities=None, listener=None, supported_encodings=None, services=None, context=None, channel_filter=None, message_backlog_size=None, foxglove_api_url=None, foxglove_api_timeout=None))]
+#[pyo3(signature = (*, name=None, device_token=None, capabilities=None, listener=None, supported_encodings=None, services=None, context=None, channel_filter=None, qos_classifier=None, message_backlog_size=None, foxglove_api_url=None, foxglove_api_timeout=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn start_gateway(
     py: Python<'_>,
@@ -322,10 +541,13 @@ pub fn start_gateway(
     services: Option<Vec<PyService>>,
     context: Option<PyRef<PyContext>>,
     channel_filter: Option<Py<PyAny>>,
+    qos_classifier: Option<Py<PyAny>>,
     message_backlog_size: Option<usize>,
     foxglove_api_url: Option<String>,
     foxglove_api_timeout: Option<f64>,
 ) -> PyResult<PyRemoteAccessGateway> {
+    init_logging(py, None);
+
     let mut gateway = Gateway::new();
 
     if let Some(name) = name {
@@ -361,6 +583,10 @@ pub fn start_gateway(
         gateway = gateway.channel_filter(Arc::new(PySinkChannelFilter(channel_filter)));
     }
 
+    if let Some(qos_classifier) = qos_classifier {
+        gateway = gateway.qos_classifier(Arc::new(PyQosClassifier(qos_classifier)));
+    }
+
     if let Some(size) = message_backlog_size {
         gateway = gateway.message_backlog_size(size);
     }
@@ -392,16 +618,8 @@ pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyRemoteAccessCapability>()?;
     module.add_class::<PyRemoteAccessClient>()?;
     module.add_class::<PyConnectionStatus>()?;
-
-    // Re-export shared service and parameter types from the websocket module,
-    // since remote_access and websocket share the same underlying types.
-    module.add_class::<PyService>()?;
-    module.add_class::<PyServiceRequest>()?;
-    module.add_class::<PyServiceSchema>()?;
-    module.add_class::<PyMessageSchema>()?;
-    module.add_class::<PyParameter>()?;
-    module.add_class::<PyParameterType>()?;
-    module.add_class::<PyParameterValue>()?;
+    module.add_class::<PyReliability>()?;
+    module.add_class::<PyQosProfile>()?;
 
     let py = parent_module.py();
     py.import("sys")?

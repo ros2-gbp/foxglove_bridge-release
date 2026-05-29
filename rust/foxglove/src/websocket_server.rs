@@ -1,4 +1,4 @@
-//! Websocket server
+//! WebSocket server
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use crate::sink_channel_filter::{SinkChannelFilter, SinkChannelFilterFn};
 use crate::websocket::PlaybackState;
-#[cfg(feature = "tls")]
+#[cfg(feature = "websocket-tls")]
 use crate::websocket::TlsIdentity;
 use crate::websocket::service::Service;
 use crate::websocket::{
-    AssetHandler, AsyncAssetHandlerFn, BlockingAssetHandlerFn, Capability, Client, ConnectionGraph,
-    Parameter, Server, ServerOptions, ShutdownHandle, Status, create_server,
+    AnyClient, AssetHandler, AsyncAssetHandlerFn, BlockingAssetHandlerFn, Capability,
+    ConnectionGraph, Parameter, ParameterHandler, Server, ServerOptions, ShutdownHandle, Status,
+    create_server,
 };
 use crate::{AppUrl, ChannelDescriptor, Context, FoxgloveError, runtime::get_runtime_handle};
 
@@ -58,12 +59,12 @@ impl Default for WebSocketServer {
 }
 
 impl WebSocketServer {
-    /// Creates a new websocket server with default options.
+    /// Creates a new WebSocket server with default options.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set the websocket server name to advertise to clients.
+    /// Set the WebSocket server name to advertise to clients.
     ///
     /// By default, the server is not given a name.
     pub fn name(mut self, name: impl Into<String>) -> Self {
@@ -104,7 +105,7 @@ impl WebSocketServer {
     /// If enabled, the server will only accept connections using wss://.
     /// If TLS configuration fails, starting the server will result in an error.
     #[doc(hidden)]
-    #[cfg(feature = "tls")]
+    #[cfg(feature = "websocket-tls")]
     pub fn tls(mut self, tls_identity: TlsIdentity) -> Self {
         self.options.tls_identity = Some(tls_identity);
         self
@@ -140,7 +141,7 @@ impl WebSocketServer {
 
     /// Configure the handler for fetching assets.
     /// There can only be one asset handler, exclusive with the other fetch_asset_handler methods.
-    pub fn fetch_asset_handler(mut self, handler: Box<dyn AssetHandler>) -> Self {
+    pub fn fetch_asset_handler(mut self, handler: Arc<dyn AssetHandler>) -> Self {
         self.options.fetch_asset_handler = Some(handler);
         self
     }
@@ -149,24 +150,34 @@ impl WebSocketServer {
     /// There can only be one asset handler, exclusive with the other fetch_asset_handler methods.
     pub fn fetch_asset_handler_blocking_fn<F, T, Err>(mut self, handler: F) -> Self
     where
-        F: Fn(Client, String) -> Result<T, Err> + Send + Sync + 'static,
+        F: Fn(AnyClient, String) -> Result<T, Err> + Send + Sync + 'static,
         T: AsRef<[u8]>,
         Err: Display,
     {
         self.options.fetch_asset_handler =
-            Some(Box::new(BlockingAssetHandlerFn(Arc::new(handler))));
+            Some(Arc::new(BlockingAssetHandlerFn(Arc::new(handler))));
         self
     }
     /// Configure an asynchronous function as a fetch asset handler.
     /// There can only be one asset handler, exclusive with the other fetch_asset_handler methods.
     pub fn fetch_asset_handler_async_fn<F, Fut, T, Err>(mut self, handler: F) -> Self
     where
-        F: Fn(Client, String) -> Fut + Send + Sync + 'static,
+        F: Fn(AnyClient, String) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<T, Err>> + Send + 'static,
         T: AsRef<[u8]>,
         Err: Display,
     {
-        self.options.fetch_asset_handler = Some(Box::new(AsyncAssetHandlerFn(Arc::new(handler))));
+        self.options.fetch_asset_handler = Some(Arc::new(AsyncAssetHandlerFn(Arc::new(handler))));
+        self
+    }
+
+    /// Configure the handler for client-initiated parameter operations.
+    ///
+    /// When set, the handler takes precedence over the deprecated parameter callbacks on
+    /// [`ServerListener`](crate::websocket::ServerListener). Automatically adds
+    /// [`Capability::Parameters`] to the set of advertised capabilities.
+    pub fn parameter_handler(mut self, handler: Arc<dyn ParameterHandler>) -> Self {
+        self.options.parameter_handler = Some(handler);
         self
     }
 
@@ -237,7 +248,7 @@ impl WebSocketServer {
         self
     }
 
-    /// Starts the websocket server.
+    /// Starts the WebSocket server.
     ///
     /// Returns a handle that can optionally be used to gracefully shutdown the server. The caller
     /// can safely drop the handle, and the server will run forever.
@@ -247,7 +258,7 @@ impl WebSocketServer {
         Ok(WebSocketServerHandle(server, addr))
     }
 
-    /// Starts the websocket server.
+    /// Starts the WebSocket server.
     ///
     /// Returns a handle that can optionally be used to gracefully shutdown the server. The caller
     /// can safely drop the handle, and the server will run forever.
@@ -270,7 +281,7 @@ impl WebSocketServer {
     }
 }
 
-/// A handle to the websocket server.
+/// A handle to the WebSocket server.
 ///
 /// This handle can safely be dropped and the server will run forever.
 pub struct WebSocketServerHandle(Arc<Server>, SocketAddr);
@@ -292,7 +303,7 @@ impl WebSocketServerHandle {
         self.0.client_count()
     }
 
-    /// Returns an app URL to open the websocket as a data source.
+    /// Returns an app URL to open the WebSocket connection as a data source.
     pub fn app_url(&self) -> AppUrl {
         let protocol = if self.0.is_tls_configured() {
             "wss"
@@ -357,7 +368,7 @@ impl WebSocketServerHandle {
         self.0.publish_status(status);
     }
 
-    /// Removes status messages by id from all clients.
+    /// Removes status messages by ID from all clients.
     pub fn remove_status(&self, status_ids: Vec<String>) {
         self.0.remove_status(status_ids);
     }
@@ -375,7 +386,7 @@ impl WebSocketServerHandle {
         self.0.replace_connection_graph(replacement_graph)
     }
 
-    /// Gracefully shut down the websocket server.
+    /// Gracefully shut down the WebSocket server.
     ///
     /// Returns a handle that can be used to wait for the graceful shutdown to complete. If the
     /// handle is dropped, all client tasks will be immediately aborted.
