@@ -2,6 +2,21 @@
 Changelog for package foxglove_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+3.4.0 (2026-05-28)
+------------------
+* Fix an issue where the ``parameters`` implementation would occasionally stall message forwarding for several seconds
+* Fix an issue where the bridge was not refcounting parameter subscriptions properly when a WebSocket server and Remote Access gateway were simultaneously in use
+* Fix an issue where the parameter whitelist would randomly prevent subscribing to or setting unrelated parameters
+* Add ``message_backlog_size`` option to configure the outgoing message buffer
+* Update Foxglove SDK version to 0.25.0
+
+3.3.0 (2026-04-30)
+------------------
+* Fix an issue where the bridge would stay subscribed to the graph even after clients disconnect
+* Add support for remote access
+* Publish process and system statistics (CPU, memory) on ``/foxglove_bridge/sysinfo`` by default
+* Update Foxglove SDK version to 0.23.1
+
 3.2.6 (2026-04-02)
 ------------------
 * Fix ROS rolling build for rclcpp 31.0.0
