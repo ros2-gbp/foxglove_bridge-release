@@ -156,11 +156,11 @@ tracks:
     - git-bloom-generate -y rosdynrpm --prefix release/:{ros_distro} :{ros_distro}
       -i :{release_inc} --require-os fedora rhel
     devel_branch: main
-    last_release: ros-v3.2.6
-    last_version: 3.2.6
+    last_release: ros-v3.4.0
+    last_version: 3.4.0
     name: foxglove-sdk
     patches: null
-    release_inc: '3'
+    release_inc: '1'
     release_repo_url: null
     release_tag: ros-v:{version}
     ros_distro: lyrical
