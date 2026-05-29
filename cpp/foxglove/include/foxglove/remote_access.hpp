@@ -6,6 +6,7 @@
 #include <foxglove/error.hpp>
 #include <foxglove/fetch_asset.hpp>
 #include <foxglove/parameter.hpp>
+#include <foxglove/parameter_handler.hpp>
 #include <foxglove/service.hpp>
 
 #include <chrono>
@@ -54,7 +55,7 @@ enum class RemoteAccessGatewayCapabilities : uint8_t {
   Parameters = 1 << 1,
   /// Allow clients to call services.
   Services = 1 << 2,
-  /// Allow clients to subscribe and make connection graph updates.
+  /// Allow clients to subscribe to connection graph updates.
   ConnectionGraph = 1 << 3,
   /// Allow clients to request assets.
   Assets = 1 << 4,
@@ -80,6 +81,15 @@ inline RemoteAccessGatewayCapabilities operator&(
 ///
 /// @note These callbacks may be invoked concurrently from multiple threads.
 /// You must synchronize access to your mutable internal state or shared resources.
+// Suppress -Wdeprecated-declarations for synthesized special members; the
+// field-level [[deprecated]] still warns on direct use.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
 struct RemoteAccessGatewayCallbacks {
   /// @brief Callback invoked when the gateway connection status changes.
   std::function<void(RemoteAccessConnectionStatus status)> onConnectionStatusChanged;
@@ -106,20 +116,32 @@ struct RemoteAccessGatewayCallbacks {
   /// @brief Callback invoked when a client requests parameters.
   ///
   /// Requires RemoteAccessGatewayCapabilities::Parameters.
-  std::function<std::vector<Parameter>(
-    uint32_t client_id, std::optional<std::string_view> request_id,
-    const std::vector<std::string_view>& param_names
-  )>
-    onGetParameters;
+  ///
+  /// @deprecated Use ParameterHandler instead. This callback is not invoked
+  /// when a ParameterHandler is registered on the gateway.
+  [[deprecated(
+    "Use ParameterHandler instead. This callback is not invoked when a ParameterHandler is "
+    "registered on the gateway."
+  )]] std::
+    function<std::vector<Parameter>(
+      uint32_t client_id, std::optional<std::string_view> request_id,
+      const std::vector<std::string_view>& param_names
+    )> onGetParameters;
 
   /// @brief Callback invoked when a client sets parameters.
   ///
   /// Requires RemoteAccessGatewayCapabilities::Parameters.
-  std::function<std::vector<Parameter>(
-    uint32_t client_id, std::optional<std::string_view> request_id,
-    const std::vector<ParameterView>& params
-  )>
-    onSetParameters;
+  ///
+  /// @deprecated Use ParameterHandler instead. This callback is not invoked
+  /// when a ParameterHandler is registered on the gateway.
+  [[deprecated(
+    "Use ParameterHandler instead. This callback is not invoked when a ParameterHandler is "
+    "registered on the gateway."
+  )]] std::
+    function<std::vector<Parameter>(
+      uint32_t client_id, std::optional<std::string_view> request_id,
+      const std::vector<ParameterView>& params
+    )> onSetParameters;
 
   /// @brief Callback invoked when a client subscribes to parameters for the first time.
   ///
@@ -145,6 +167,11 @@ struct RemoteAccessGatewayCallbacks {
   /// @warning Do not call publishConnectionGraph from within this callback; doing so will deadlock.
   std::function<void()> onConnectionGraphUnsubscribe;
 };
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 /// @brief The reliability policy for a channel's data delivery.
 enum class Reliability : uint8_t {
@@ -192,6 +219,19 @@ struct RemoteAccessGatewayOptions {
   /// If set, this callback is invoked for each channel to determine its quality-of-service
   /// profile. If not set, all channels use the default lossy profile.
   QosClassifierFn qos_classifier;
+  /// @brief A parameter handler.
+  ///
+  /// When set, this handler takes precedence over the deprecated
+  /// `onGetParameters` / `onSetParameters` callbacks. Registering a handler
+  /// also automatically advertises the `Parameters` capability. Subscribe /
+  /// unsubscribe notifications still go through the `onParametersSubscribe` /
+  /// `onParametersUnsubscribe` callbacks on `RemoteAccessGatewayCallbacks`;
+  /// wire those up separately if you want to be notified.
+  ///
+  /// Both `ParameterHandler::onGet` and `ParameterHandler::onSet` are
+  /// required when a handler is supplied; setting only one returns
+  /// `FoxgloveError::ValueError` from `RemoteAccessGateway::create`.
+  ParameterHandler parameter_handler;
   /// @cond foxglove_internal
   /// @brief (internal) Information about the gateway, which is shared with clients.
   ///
@@ -199,11 +239,16 @@ struct RemoteAccessGatewayOptions {
   std::optional<std::map<std::string, std::string>> server_info = std::nullopt;
   /// @endcond
   /// @brief Override the Foxglove API base URL.
-  std::optional<std::string> foxglove_api_url;
+  std::optional<std::string> foxglove_api_url = std::nullopt;
   /// @brief Override the Foxglove API timeout (in seconds).
-  std::optional<uint64_t> foxglove_api_timeout_secs;
+  std::optional<uint64_t> foxglove_api_timeout_secs = std::nullopt;
   /// @brief Override the message backlog size.
-  std::optional<size_t> message_backlog_size;
+  ///
+  /// Each participant gets an independent queue of this size. If a participant's queue fills up
+  /// (because it is not reading fast enough), it will be disconnected and asked to reconnect.
+  ///
+  /// By default, each participant gets a queue of 1024 messages.
+  std::optional<size_t> message_backlog_size = std::nullopt;
 };
 
 /// @brief A remote access gateway for live visualization and teleop in Foxglove.
@@ -280,13 +325,15 @@ private:
     foxglove_gateway* gateway, std::unique_ptr<RemoteAccessGatewayCallbacks> callbacks,
     std::unique_ptr<FetchAssetHandler> fetch_asset,
     std::unique_ptr<SinkChannelFilterFn> sink_channel_filter,
-    std::unique_ptr<QosClassifierFn> qos_classifier
+    std::unique_ptr<QosClassifierFn> qos_classifier,
+    std::unique_ptr<ParameterHandler> parameter_handler
   );
 
   std::unique_ptr<RemoteAccessGatewayCallbacks> callbacks_;
   std::unique_ptr<FetchAssetHandler> fetch_asset_;
   std::unique_ptr<SinkChannelFilterFn> sink_channel_filter_;
   std::unique_ptr<QosClassifierFn> qos_classifier_;
+  std::unique_ptr<ParameterHandler> parameter_handler_;
   std::unique_ptr<foxglove_gateway, foxglove_error (*)(foxglove_gateway*)> impl_;
 };
 

@@ -9,6 +9,7 @@ use crate::channel_descriptor::FoxgloveChannelDescriptor;
 use crate::connection_graph::FoxgloveConnectionGraph;
 use crate::fetch_asset::{FetchAssetHandler, FoxgloveFetchAssetResponder};
 use crate::parameter::FoxgloveParameterArray;
+use crate::parameter_handler::FoxgloveParameterHandler;
 use crate::server::FoxgloveServerStatusLevel;
 use crate::service::FoxgloveService;
 use crate::sink_channel_filter::ChannelFilter;
@@ -123,7 +124,7 @@ pub const FOXGLOVE_GATEWAY_CAPABILITY_CLIENT_PUBLISH: u8 = 1 << 0;
 pub const FOXGLOVE_GATEWAY_CAPABILITY_PARAMETERS: u8 = 1 << 1;
 /// Allow clients to call services.
 pub const FOXGLOVE_GATEWAY_CAPABILITY_SERVICES: u8 = 1 << 2;
-/// Allow clients to subscribe and make connection graph updates.
+/// Allow clients to subscribe to connection graph updates.
 pub const FOXGLOVE_GATEWAY_CAPABILITY_CONNECTION_GRAPH: u8 = 1 << 3;
 /// Allow clients to request assets.
 pub const FOXGLOVE_GATEWAY_CAPABILITY_ASSETS: u8 = 1 << 4;
@@ -247,6 +248,10 @@ pub struct FoxgloveGatewayCallbacks {
     /// This function should return the named parameters, or all parameters if `param_names` is
     /// empty. The return value must be allocated with `foxglove_parameter_array_create`. Ownership
     /// of this value is transferred to the callee. A NULL return value is treated as empty.
+    ///
+    /// Deprecated: prefer `foxglove_gateway_options::parameter_handler`. If a
+    /// `FoxgloveParameterHandler` is registered, it takes precedence and this callback is not
+    /// invoked.
     pub on_get_parameters: Option<
         unsafe extern "C" fn(
             context: *const c_void,
@@ -270,6 +275,10 @@ pub struct FoxgloveGatewayCallbacks {
     /// This function should return the updated parameters. The return value must be allocated with
     /// `foxglove_parameter_array_create`. Ownership is transferred to the callee. A NULL return
     /// value is treated as empty.
+    ///
+    /// Deprecated: prefer `foxglove_gateway_options::parameter_handler`. If a
+    /// `FoxgloveParameterHandler` is registered, it takes precedence and this callback is not
+    /// invoked.
     pub on_set_parameters: Option<
         unsafe extern "C" fn(
             context: *const c_void,
@@ -588,8 +597,18 @@ pub struct FoxgloveGatewayOptions<'a> {
     /// Optional Foxglove API timeout in seconds.
     pub foxglove_api_timeout_secs: Option<&'a u64>,
 
-    /// Optional message backlog size override.
-    pub message_backlog_size: Option<&'a usize>,
+    /// Message backlog size override. A value of 0 means use the default (1024).
+    pub message_backlog_size: usize,
+
+    /// Optional parameter handler.
+    ///
+    /// When set, this handler takes precedence over the deprecated `on_get_parameters` /
+    /// `on_set_parameters` callbacks on `foxglove_gateway_callbacks`. Registering a handler
+    /// automatically enables the `FOXGLOVE_GATEWAY_CAPABILITY_PARAMETERS` capability.
+    ///
+    /// When provided, both `get` and `set` on the handler are required; otherwise
+    /// `foxglove_gateway_start` returns `FOXGLOVE_ERROR_VALUE_ERROR`.
+    pub parameter_handler: Option<&'a FoxgloveParameterHandler>,
 }
 
 // Handle
@@ -701,6 +720,12 @@ unsafe fn do_foxglove_gateway_start(
         gateway = gateway.listener(Arc::new(callbacks.clone()));
     }
 
+    // Parameter handler
+    if let Some(handler) = options.parameter_handler {
+        handler.validate()?;
+        gateway = gateway.parameter_handler(handler.clone().into_arc());
+    }
+
     // Channel filter
     if let Some(sink_channel_filter) = options.sink_channel_filter {
         gateway = gateway.channel_filter(Arc::new(ChannelFilter::new(
@@ -719,7 +744,7 @@ unsafe fn do_foxglove_gateway_start(
 
     // Fetch asset handler
     if let Some(fetch_asset) = options.fetch_asset {
-        gateway = gateway.fetch_asset_handler(Box::new(FetchAssetHandler::new(
+        gateway = gateway.fetch_asset_handler(Arc::new(FetchAssetHandler::new(
             options.fetch_asset_context,
             fetch_asset,
         )));
@@ -745,8 +770,8 @@ unsafe fn do_foxglove_gateway_start(
     }
 
     // Message backlog size
-    if let Some(&backlog_size) = options.message_backlog_size {
-        gateway = gateway.message_backlog_size(backlog_size);
+    if options.message_backlog_size != 0 {
+        gateway = gateway.message_backlog_size(options.message_backlog_size);
     }
 
     let handle = gateway.start()?;

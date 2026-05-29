@@ -1,6 +1,6 @@
 use crate::PySchema;
 use base64::prelude::*;
-use foxglove::websocket::{AssetHandler, Client, StatusLevel};
+use foxglove::websocket::{AssetHandler, StatusLevel};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -212,6 +212,27 @@ pub enum PyParameterType {
     /// An array of floating-point values that can be represented as ``float64``s. Used to
     /// preserve the floating-point type for arrays of whole-valued numbers.
     Float64Array,
+}
+
+#[pymethods]
+impl PyParameterType {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ByteArray => "ByteArray",
+            Self::Float64 => "Float64",
+            Self::Float64Array => "Float64Array",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::ByteArray => 0,
+            Self::Float64 => 1,
+            Self::Float64Array => 2,
+        }
+    }
 }
 
 impl From<PyParameterType> for foxglove::websocket::ParameterType {
@@ -548,7 +569,7 @@ pub struct CallbackAssetHandler {
     pub handler: Arc<Py<PyAny>>,
 }
 
-impl AssetHandler<Client> for CallbackAssetHandler {
+impl AssetHandler for CallbackAssetHandler {
     fn fetch(&self, uri: String, responder: foxglove::websocket::AssetResponder) {
         let handler = self.handler.clone();
 
@@ -574,6 +595,27 @@ pub enum PyStatusLevel {
     Info,
     Warning,
     Error,
+}
+
+#[pymethods]
+impl PyStatusLevel {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+            Self::Error => "Error",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Info => 0,
+            Self::Warning => 1,
+            Self::Error => 2,
+        }
+    }
 }
 
 impl From<PyStatusLevel> for StatusLevel {
