@@ -1,4 +1,4 @@
-ROS_DISTRIBUTIONS := humble jazzy kilted rolling
+ROS_DISTRIBUTIONS := humble jazzy kilted lyrical rolling
 FOXGLOVE_BRIDGE_REMOTE_ACCESS := ON
 FOXGLOVE_CPP_SDK_DIR :=
 EXTRA_DOCKER_ARGS :=
@@ -35,6 +35,7 @@ deps:
 .PHONY: build
 build:
 	colcon build --cmake-args \
+		--no-warn-unused-cli \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-DFOXGLOVE_BRIDGE_REMOTE_ACCESS=$(FOXGLOVE_BRIDGE_REMOTE_ACCESS) \
 		$(if $(FOXGLOVE_CPP_SDK_DIR),-DFETCHCONTENT_SOURCE_DIR_FOXGLOVE_SDK=$(FOXGLOVE_CPP_SDK_DIR))

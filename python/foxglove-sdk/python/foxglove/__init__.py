@@ -128,6 +128,7 @@ try:
         session_id: str | None = None,
         channel_filter: SinkChannelFilter | None = None,
         playback_time_range: tuple[int, int] | None = None,
+        message_backlog_size: int | None = None,
     ) -> WebSocketServer:
         """
         Start a WebSocket server for live visualization.
@@ -151,6 +152,9 @@ try:
             will be logged.
         :param playback_time_range: Time range of data being played back, in absolute nanoseconds.
             Implies ``Capability.PlaybackControl`` if set.
+        :param message_backlog_size: The maximum number of outgoing messages to buffer per client.
+            The oldest data-plane message is dropped when the buffer fills. The control-plane queue
+            is the same size; if it fills, the slow client is disconnected. Defaults to 1024.
         """
         return _foxglove.start_server(
             name=name,
@@ -165,6 +169,7 @@ try:
             session_id=session_id,
             channel_filter=channel_filter,
             playback_time_range=playback_time_range,
+            message_backlog_size=message_backlog_size,
         )
 
     __all__ += [
@@ -178,10 +183,64 @@ except ImportError:
 
 
 try:
-    from ._foxglove_py import (
-        SystemInfoPublisher,
-        start_sysinfo_publisher,
-    )
+    from ._foxglove_py import SystemInfoPublisher
+    from ._foxglove_py import start_sysinfo_publisher as _start_sysinfo_publisher
+
+    # Keep this doc string in sync with rust/foxglove/src/system_info.rs
+    def start_sysinfo_publisher(
+        *,
+        topic: str | None = None,
+        refresh_interval: float | None = None,
+        context: Context | None = None,
+    ) -> SystemInfoPublisher:
+        """
+        Start the system info publisher.
+
+        Periodically publishes a ``SystemInfo`` message to a channel containing process and
+        system statistics (memory, CPU, OS info).
+
+        .. rubric:: Published metrics
+
+        Each message is a JSON object with a JSON Schema attached to the channel.
+        The following fields are published:
+
+        - ``process_memory`` (number): Resident memory used by the SDK process, in bytes.
+        - ``process_virtual_memory`` (number): Virtual memory used by the SDK process, in bytes.
+        - ``process_cpu_percent`` (number): CPU usage for the SDK process, as a percent of total
+          system CPU capacity (0.0 to 100.0).
+        - ``process_cpu_cores`` (number): CPU usage for the SDK process, expressed in
+          core-equivalents (0.0 to ``num_cpus``). 1.0 means a single logical CPU is fully utilized.
+        - ``total_cpu_percent`` (number): Total CPU usage across all logical CPUs on the system,
+          as a percent (0.0 to 100.0).
+        - ``total_cpu_cores`` (number): Total CPU usage across the system, expressed in
+          core-equivalents (0.0 to ``num_cpus``). 1.0 means one logical CPU's worth of work is
+          being done.
+        - ``num_cpus`` (integer): Number of logical CPUs on the system.
+        - ``total_memory`` (number): Total physical memory on the system, in bytes.
+        - ``used_memory`` (number): Used physical memory on the system, in bytes.
+        - ``total_swap`` (number): Total swap space on the system, in bytes.
+        - ``used_swap`` (number): Used swap space on the system, in bytes.
+        - ``kernel_version`` (string): Kernel version string, or empty if unknown.
+        - ``os_version`` (string): OS version string, or empty if unknown.
+
+        CPU usage values are computed from the difference between consecutive samples, so they
+        reflect activity over the most recent refresh interval.
+
+        The caller is responsible for calling stop() on the returned handle when done;
+        dropping the handle does not stop the background task.
+
+        :param topic: The channel topic name. Defaults to ``/sysinfo``.
+        :param refresh_interval: How often to publish, in seconds. Defaults to ``0.5``.
+            Clamped to a minimum of 0.2s.
+        :param context: The context on which the publisher creates its channel. Defaults to
+            the global default context.
+        :returns: A handle that can be used to stop the publisher.
+        """
+        return _start_sysinfo_publisher(
+            topic=topic,
+            refresh_interval=refresh_interval,
+            context=context,
+        )
 
     __all__ += [
         "SystemInfoPublisher",
@@ -235,8 +294,8 @@ try:
         :param qos_classifier: A ``Callable`` that returns the
             :py:class:`foxglove.remote_access.QosProfile` to use for a given channel. If not set,
             all channels use the default lossy profile.
-        :param message_backlog_size: The maximum number of messages to buffer before dropping
-            the oldest entries. Defaults to 1024.
+        :param message_backlog_size: The maximum number of messages to buffer before disconnecting
+            the slow client. Defaults to 1024.
         :param foxglove_api_url: Override the Foxglove API base URL.
         :param foxglove_api_timeout: Timeout for Foxglove API requests, in seconds.
         """
@@ -258,23 +317,26 @@ try:
     __all__ += ["start_gateway"]
 
 except ImportError:
-    if sys.platform != "emscripten":
-        raise
+    # Remote access is only included on supported platforms.
+    pass
 
 
 def set_log_level(level: int | str = "INFO") -> None:
     """
-    Enable SDK logging.
+    Sets the global log level for the Foxglove SDK and initializes logging.
 
-    This function will call logging.basicConfig() for convenience in scripts, but in general you
-    should configure logging yourself before calling this function:
-    https://docs.python.org/3/library/logging.html
+    If FOXGLOVE_LOG_LEVEL is set, that's used instead of the passed level.
+
+    This function should be called before other Foxglove initialization to capture output from all
+    components. Calling this after starting a sink (e.g. server, gateway, or mcap) will
+    have no effect. Only the first call to this function will have an effect. Thread-safe.
+
+    This calls logging.basicConfig to setup a global logger if one is not already configured.
+    Set up your logging before calling this function to avoid that.
 
     :param level: The logging level to set. This accepts the same values as `logging.setLevel` and
         defaults to "INFO". The SDK will not log at levels "CRITICAL" or higher.
     """
-    # This will raise a ValueError for invalid levels if the user has not already configured
-    logging.basicConfig(level=level, format="%(asctime)s [%(levelname)s] %(message)s")
 
     if isinstance(level, str):
         level_map = (
