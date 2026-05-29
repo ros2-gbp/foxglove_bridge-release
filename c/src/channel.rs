@@ -286,6 +286,13 @@ impl McapWriterVariant {
             McapWriterVariant::Custom(writer) => writer.attach(attachment),
         }
     }
+
+    fn flush(&self) -> Result<(), foxglove::FoxgloveError> {
+        match self {
+            McapWriterVariant::File(writer) => writer.flush(),
+            McapWriterVariant::Custom(writer) => writer.flush(),
+        }
+    }
 }
 
 /// An MCAP attachment to store in an MCAP file.
@@ -437,6 +444,35 @@ pub unsafe extern "C" fn foxglove_mcap_close(
 
     // We don't care about the return value
     unsafe { result_to_c(result, std::ptr::null_mut()) }
+}
+
+/// Finishes the current chunk (if any) and flushes the underlying writer.
+///
+/// Note that compression ratios tend to improve over the lifetime of a chunk, so flushing
+/// frequently with chunked output may reduce overall compression.
+///
+/// Returns 0 on success, or returns a FoxgloveError code on error.
+///
+/// # Safety
+/// `writer` must be a valid pointer to a `FoxgloveMcapWriter` created via `foxglove_mcap_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn foxglove_mcap_flush(
+    writer: Option<&mut FoxgloveMcapWriter>,
+) -> FoxgloveError {
+    let Some(writer) = writer else {
+        tracing::error!("foxglove_mcap_flush called with null writer");
+        return FoxgloveError::ValueError;
+    };
+    let Some(writer_handle) = writer.0.as_ref() else {
+        return FoxgloveError::SinkClosed;
+    };
+    match writer_handle.flush() {
+        Ok(()) => FoxgloveError::Ok,
+        Err(e) => {
+            tracing::error!("foxglove_mcap_flush failed: {e}");
+            e.into()
+        }
+    }
 }
 
 /// Write metadata to an MCAP file.
@@ -896,9 +932,12 @@ pub unsafe extern "C" fn foxglove_channel_metadata_iter_free(
 
 /// Log a message on a channel.
 ///
+/// Zero-length messages are supported: pass `data_len == 0` with either a null `data` pointer
+/// or any non-null pointer. The contents of `data` are not read when `data_len == 0`.
+///
 /// # Safety
-/// `data` must be non-null, and the range `[data, data + data_len)` must contain initialized data
-/// contained within a single allocated object.
+/// If `data_len > 0`, `data` must be non-null and the range `[data, data + data_len)` must
+/// contain initialized data contained within a single allocated object.
 ///
 /// `log_time` Some(nanoseconds since epoch timestamp) or None to use the current time.
 #[unsafe(no_mangle)]
@@ -916,10 +955,17 @@ pub unsafe extern "C" fn foxglove_channel_log(
         tracing::error!("foxglove_channel_log called with null channel");
         return FoxgloveError::ValueError;
     };
-    if data.is_null() || data_len == 0 {
-        tracing::error!("foxglove_channel_log called with null or empty data");
+    let msg: &[u8] = if data_len == 0 {
+        // Allow a null data pointer for zero-length messages so callers don't have to
+        // construct a dummy non-null pointer just to log an empty payload.
+        &[]
+    } else if data.is_null() {
+        tracing::error!("foxglove_channel_log called with null data but data_len > 0");
         return FoxgloveError::ValueError;
-    }
+    } else {
+        // Safety: data is non-null and data_len > 0
+        unsafe { std::slice::from_raw_parts(data, data_len) }
+    };
     // avoid decrementing ref count
     let channel = ManuallyDrop::new(unsafe {
         Arc::from_raw(channel as *const _ as *const foxglove::RawChannel)
@@ -928,7 +974,7 @@ pub unsafe extern "C" fn foxglove_channel_log(
     let sink_id = std::num::NonZeroU64::new(sink_id).map(foxglove::SinkId::new);
 
     channel.log_with_meta_to_sink(
-        unsafe { std::slice::from_raw_parts(data, data_len) },
+        msg,
         foxglove::PartialMetadata {
             log_time: log_time.copied(),
         },

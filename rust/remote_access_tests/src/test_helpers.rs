@@ -52,6 +52,8 @@ pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 pub const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Per-attempt timeout when waiting for a byte stream during connection retries.
 pub const CONNECT_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Sleep between connection retry attempts when `Room::connect` fails transiently.
+pub const CONNECT_RETRY_SLEEP: Duration = Duration::from_millis(500);
 
 /// Type alias for a channel filter function passed to [`TestGateway::start_with_filter`].
 pub type ChannelFilterFn =
@@ -229,13 +231,26 @@ impl ViewerConnection {
         let outer_deadline = tokio::time::Instant::now() + timeout;
         loop {
             let token = livekit_token::generate_token(room_name, viewer_identity)?;
-            let (room, mut events) = Room::connect(
+            let connect_result = Room::connect(
                 &livekit_token::livekit_url(),
                 &token,
                 RoomOptions::default(),
             )
-            .await
-            .context("viewer failed to connect to LiveKit")?;
+            .await;
+            let (room, mut events) = match connect_result {
+                Ok(pair) => pair,
+                Err(err) => {
+                    // All connect failures are retried until the outer
+                    // deadline. Covers transient cases like 401 during
+                    // LiveKit init.
+                    if tokio::time::Instant::now() >= outer_deadline {
+                        return Err(err).context("viewer failed to connect to LiveKit");
+                    }
+                    info!("{viewer_identity} connect failed ({err:#}), retrying...");
+                    tokio::time::sleep(CONNECT_RETRY_SLEEP).await;
+                    continue;
+                }
+            };
             info!("{viewer_identity} connected to room, waiting for byte stream");
 
             // Wait for a ByteStreamOpened event. Use a shorter inner timeout so
@@ -520,6 +535,17 @@ impl ViewerConnection {
 
     /// Waits for a `TrackSubscribed` room event and returns the track name.
     pub async fn expect_track_subscribed(&mut self) -> Result<String> {
+        let (name, _publication) = self.expect_track_subscribed_publication().await?;
+        Ok(name)
+    }
+
+    /// Waits for a `TrackSubscribed` room event and returns `(track_name, publication)`.
+    ///
+    /// Use this when the test needs to inspect publication metadata (e.g.
+    /// `packet_trailer_features()`) rather than just observe that a track appeared.
+    pub async fn expect_track_subscribed_publication(
+        &mut self,
+    ) -> Result<(String, livekit::prelude::RemoteTrackPublication)> {
         let deadline = tokio::time::Instant::now() + EVENT_TIMEOUT;
         loop {
             let event = tokio::time::timeout_at(deadline, self.events.recv())
@@ -528,7 +554,45 @@ impl ViewerConnection {
                 .context("room events channel closed")?;
             match event {
                 RoomEvent::TrackSubscribed { publication, .. } => {
-                    return Ok(publication.name());
+                    return Ok((publication.name(), publication));
+                }
+                RoomEvent::DataTrackPublished(track) => {
+                    self.pending_data_tracks.push(track);
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    /// Waits for a `TrackSubscribed` event for a video track and returns
+    /// `(track_name, video_track)`.
+    ///
+    /// Use this when the test needs to wrap the track in a `NativeVideoStream`
+    /// to receive decoded frames (e.g. to validate packet-trailer metadata).
+    ///
+    /// The next track subscribed on the wire must be a video track; otherwise this
+    /// fails permanently. Use [`expect_track_subscribed_publication`] if you need
+    /// to tolerate other track kinds (e.g. audio arriving first).
+    pub async fn expect_video_track_subscribed(
+        &mut self,
+    ) -> Result<(String, livekit::prelude::RemoteVideoTrack)> {
+        let deadline = tokio::time::Instant::now() + EVENT_TIMEOUT;
+        loop {
+            let event = tokio::time::timeout_at(deadline, self.events.recv())
+                .await
+                .context("timeout waiting for TrackSubscribed event")?
+                .context("room events channel closed")?;
+            match event {
+                RoomEvent::TrackSubscribed {
+                    track, publication, ..
+                } => {
+                    let name = publication.name();
+                    match track {
+                        livekit::prelude::RemoteTrack::Video(video) => {
+                            return Ok((name, video));
+                        }
+                        other => anyhow::bail!("expected video track for {name}, got: {other:?}"),
+                    }
                 }
                 RoomEvent::DataTrackPublished(track) => {
                     self.pending_data_tracks.push(track);
@@ -623,6 +687,39 @@ impl ViewerConnection {
             .unwrap()
             .next_message_data()
             .await
+    }
+
+    /// Returns `true` if a `DataTrackPublished` event for `data-ch-{channel_id}`
+    /// is found in the pending queue or arrives within `timeout`.
+    ///
+    /// Uses a short timeout so it can be used for negative assertions — by the
+    /// time this is called the event (if any) is already in the queue.
+    pub async fn has_device_data_track(&mut self, channel_id: u64, timeout: Duration) -> bool {
+        let expected_name = format!("data-ch-{channel_id}");
+        if self
+            .pending_data_tracks
+            .iter()
+            .any(|t| t.info().name() == expected_name)
+        {
+            return true;
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let event = match tokio::time::timeout_at(deadline, self.events.recv()).await {
+                Err(_) | Ok(None) => return false,
+                Ok(Some(e)) => e,
+            };
+            match event {
+                RoomEvent::DataTrackPublished(track) if track.info().name() == expected_name => {
+                    self.pending_data_tracks.push(track);
+                    return true;
+                }
+                RoomEvent::DataTrackPublished(track) => {
+                    self.pending_data_tracks.push(track);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Waits for a `ParticipantDisconnected` room event for the given identity.
@@ -756,6 +853,7 @@ type QosClassifierFn =
 pub struct TestGatewayOptions {
     pub filter: Option<ChannelFilterFn>,
     pub listener: Option<Arc<dyn foxglove::remote_access::Listener>>,
+    pub parameter_handler: Option<Arc<dyn foxglove::remote_access::ParameterHandler>>,
     pub capabilities: Vec<foxglove::remote_access::Capability>,
     pub services: Vec<Service>,
     pub qos_classifier: Option<QosClassifierFn>,
@@ -829,6 +927,9 @@ impl TestGateway {
         }
         if let Some(listener) = options.listener {
             gateway = gateway.listener(listener);
+        }
+        if let Some(handler) = options.parameter_handler {
+            gateway = gateway.parameter_handler(handler);
         }
         if !options.capabilities.is_empty() {
             gateway = gateway.capabilities(options.capabilities);
