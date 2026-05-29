@@ -1,0 +1,278 @@
+name: C/C++
+
+on:
+  push:
+    branches: [main]
+    tags: ["**"]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_call:
+    inputs:
+      sdk-version:
+        required: true
+        type: string
+    outputs:
+      artifact_pattern:
+        description: "pattern to match all uploaded artifact names"
+        value: ${{ jobs.build.outputs.artifact_pattern }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      build: ${{ github.event_name != 'pull_request' || steps.paths.outputs.c-cpp == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:c-cpp') }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        if: github.event_name == 'pull_request'
+        id: paths
+        with:
+          filters: |
+            c-cpp:
+              - 'c/**'
+              - 'cpp/**'
+              - '.github/workflows/c_cpp.yml'
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-format-19 clang-tidy-19 \
+            gcc g++ libglib2.0-dev libva-dev  \
+            libwebsockets-dev nlohmann-json3-dev
+          echo "/usr/lib/llvm-19/bin" >> $GITHUB_PATH
+      - run: clang-format --version
+      - run: clang-tidy --version
+      - run: make lint
+        working-directory: cpp
+      - name: Build C libs
+        run: make -f Container.mk build-cpp-dist
+      - name: Test with clang tidy
+        run: |
+          make test \
+            CLANG_TIDY=true \
+            CMAKE_BUILD_TYPE=Debug \
+            FOXGLOVE_PREBUILT_LIB_DIR=dist/lib
+        working-directory: cpp
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux (clang, remote access disabled)
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.so
+            compiler: clang
+            skip_upload: true
+            cross: false
+
+          # Linux (remote access enabled)
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.so
+            cross: false
+            remote_access: true
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.so
+            cross: false
+            remote_access: true
+
+          # macOS (remote access enabled)
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.dylib
+            cross: false
+            remote_access: true
+          - runner: macos-15
+            target: x86_64-apple-darwin
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.dylib
+            cross: true
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=x86_64
+            remote_access: true
+
+          # Windows (remote access enabled, static CRT to match livekit prebuilt webrtc)
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            staticlib_name: foxglove.lib
+            cdylib_name: foxglove.dll
+            cross: false
+            remote_access: true
+          - runner: windows-2025
+            target: aarch64-pc-windows-msvc
+            staticlib_name: foxglove.lib
+            cdylib_name: foxglove.dll
+            cross: true
+            cmake_args: -A ARM64 -DFOXGLOVE_SKIP_TEST_DISCOVERY=ON
+            remote_access: true
+
+          # iOS
+          - runner: macos-15
+            target: aarch64-apple-ios
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.dylib
+            cross: true
+          # iOS simulator
+          - runner: macos-15
+            target: aarch64-apple-ios-sim
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.dylib
+            cross: true
+          - runner: macos-15
+            target: x86_64-apple-ios
+            staticlib_name: libfoxglove.a
+            cdylib_name: libfoxglove.dylib
+            cross: true
+
+    name: build (${{ matrix.target }}${{ matrix.remote_access && ', remote-access' || '' }}${{ matrix.compiler == 'clang' && ', clang' || ''}})
+    runs-on: ${{ matrix.runner }}
+
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          # Set a cache key to distinguish the remote-access-enabled linux
+          # builds from the non-remote-access-enabled linux builds.
+          cache-key: ${{ matrix.remote_access && 'ra-v2' || '' }}
+
+      - run: echo "IPHONEOS_DEPLOYMENT_TARGET=13.0.0" >> $GITHUB_ENV
+        # Min version needed for libaws_lc_sys
+        if: contains(matrix.target, 'apple-ios')
+      - if: matrix.target == 'aarch64-apple-ios-sim'
+        run: |
+          # https://github.com/aws/aws-lc-rs/issues/761
+          unset CARGO_BUILD_TARGET
+          cargo install bindgen-cli --version 0.72.0
+          echo "AWS_LC_SYS_EXTERNAL_BINDGEN=1" >> $GITHUB_ENV
+          echo "~/.cargo/bin" >> $GITHUB_PATH
+      - if: matrix.target == 'aarch64-apple-ios-sim'
+        run: which bindgen
+
+      - name: Install remote access build dependencies (Linux)
+        if: matrix.remote_access && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev libva-dev libwebsockets-dev
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+      - name: Use Clang
+        if: matrix.compiler == 'clang'
+        run: |
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+
+      - if: contains(matrix.target, 'windows')
+        uses: ilammy/setup-nasm@v1
+
+      - name: Build and package C/C++ SDK
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+        run: >-
+          make -f Container.mk build-cpp-dist
+          CPP_SDK_DIR=artifacts/foxglove
+          FOXGLOVE_REMOTE_ACCESS=${{ matrix.remote_access && 'ON' || 'OFF' }}
+          STATICLIB_NAME=${{ matrix.staticlib_name }}
+          CDYLIB_NAME=${{ matrix.cdylib_name }}
+
+      - name: Ensure generated files are up to date
+        run: git diff --exit-code
+
+      # Build and test C++ using the pre-built Rust libraries.
+      - name: Build C++ library
+        if: "!contains(matrix.target, 'apple-ios')"
+        run: make build
+        working-directory: cpp
+        env:
+          FOXGLOVE_PREBUILT_LIB_DIR: ${{ github.workspace }}/artifacts/foxglove/lib
+          FOXGLOVE_REMOTE_ACCESS: ${{ matrix.remote_access && 'ON' || 'OFF' }}
+          CMAKE_ARGS: ${{ matrix.cmake_args || '' }}
+      - name: Test C++ library
+        if: "!matrix.cross && !contains(matrix.target, 'apple-ios')"
+        run: ctest --test-dir build --verbose
+        working-directory: cpp
+
+      - name: Run remote data loader backend conformance tests
+        if: ${{ !matrix.cross }}
+        env:
+          REMOTE_DATA_LOADER_BACKEND_CMD: ${{ format('cpp/build/{0}', runner.os == 'Windows' && 'RelWithDebInfo/example_remote_data_loader_backend.exe' || 'example_remote_data_loader_backend') }}
+          REMOTE_DATA_LOADER_BACKEND_URL: "http://127.0.0.1:8081/v1/manifest?flightId=TEST123&startTime=2024-01-01T00:00:00Z&endTime=2024-01-01T00:00:05Z"
+          REMOTE_DATA_LOADER_BACKEND_EXPECTED_STREAMED_SOURCE_COUNT: "1"
+          REMOTE_DATA_LOADER_BACKEND_EXPECTED_STATIC_FILE_SOURCE_COUNT: "0"
+        run: cargo run -p remote_data_loader_backend_conformance
+
+      - name: Zip libraries for artifact
+        if: runner.os != 'Windows'
+        working-directory: artifacts
+        run: |
+          zip -r \
+            foxglove-${{inputs.sdk-version || github.sha}}-cpp-${{ matrix.target }}.zip \
+            foxglove/
+
+      - name: Zip libraries for artifact (Windows)
+        if: runner.os == 'Windows'
+        working-directory: artifacts
+        run: |
+          7z a -tzip -sse `
+            foxglove-${{inputs.sdk-version || github.sha}}-cpp-${{ matrix.target }}.zip `
+            foxglove/
+
+      - name: Upload static & shared library to artifacts
+        if: ${{ !(matrix.skip_upload || false) }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: foxglove-${{inputs.sdk-version || github.sha}}-cpp-${{ matrix.target }}.zip
+          path: artifacts/foxglove-${{inputs.sdk-version || github.sha}}-cpp-${{ matrix.target }}.zip
+          if-no-files-found: error
+
+  test-asan-ubsan:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: rust-src
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libglib2.0-dev libva-dev \
+            libwebsockets-dev nlohmann-json3-dev
+
+      - run: make SANITIZE=address,undefined FOXGLOVE_REMOTE_ACCESS=OFF test
+        working-directory: cpp
+
+  # Gate job for branch protection. Always posts a status so that the required
+  # check passes even when the other jobs are skipped. Configure your required
+  # status check to reference this job ("C/C++ / c-cpp-status") instead of the
+  # individual matrix jobs.
+  c-cpp-status:
+    name: c-cpp-status
+    needs: [changes, lint, build, test-asan-ubsan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
