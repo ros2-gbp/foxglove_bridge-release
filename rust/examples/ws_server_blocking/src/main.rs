@@ -1,4 +1,4 @@
-//! A websocket server without a #[tokio::main] entrypoint.
+//! A WebSocket server without a #[tokio::main] entrypoint.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,7 +43,7 @@ struct Cli {
 }
 
 fn main() {
-    let env = env_logger::Env::default().default_filter_or("debug");
+    let env = env_logger::Env::default().default_filter_or("info");
     env_logger::init_from_env(env);
 
     let args = Cli::parse();

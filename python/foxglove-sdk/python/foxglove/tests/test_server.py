@@ -4,14 +4,15 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from foxglove import (
-    Capability,
     Channel,
     Context,
     ServerListener,
     Service,
+    ServiceSchema,
+    StatusLevel,
     start_server,
 )
-from foxglove.websocket import PlaybackState, PlaybackStatus, ServiceSchema, StatusLevel
+from foxglove.websocket import Capability, PlaybackState, PlaybackStatus
 
 
 def test_server_interface() -> None:
@@ -60,6 +61,12 @@ def test_server_interface() -> None:
     server.remove_status(["some-id"])
     server.clear_session("new-session")
     server.stop()
+
+
+def test_status_level_enum() -> None:
+    """Hand-written `#[pyclass]` enums expose `.name` and `.value`."""
+    assert StatusLevel.Info.name == "Info"
+    assert StatusLevel.Info.value == 0
 
 
 def test_server_listener_provides_default_implementation() -> None:

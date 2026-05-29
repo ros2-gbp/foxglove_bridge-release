@@ -27,8 +27,8 @@ use super::ws_protocol::client::ClientMessage;
 use super::ws_protocol::server::MessageData;
 use super::ws_protocol::{self, ParseError};
 use super::{
-    AssetResponder, Capability, Client, ClientChannel, ClientChannelId, ClientId, Parameter,
-    Status, StatusLevel, advertise,
+    AnyClient, AssetResponder, Capability, Client, ClientChannel, ClientChannelId, ClientId,
+    GetParametersResponder, Parameter, SetParametersResponder, Status, StatusLevel, advertise,
 };
 use crate::remote_common::semaphore::Semaphore;
 
@@ -41,6 +41,7 @@ const MAX_SEND_RETRIES: usize = 10;
 const ADVERTISE_CHANNEL_BATCH_SIZE: usize = 100;
 const DEFAULT_SERVICE_CALLS_PER_CLIENT: usize = 32;
 const DEFAULT_FETCH_ASSET_CALLS_PER_CLIENT: usize = 32;
+const DEFAULT_PARAMETER_CALLS_PER_CLIENT: usize = 32;
 
 /// A reason for shutting down a client connection.
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +54,7 @@ pub(super) enum ShutdownReason {
     ControlPlaneQueueFull,
 }
 
-/// A connected client session with the websocket server.
+/// A connected client session with the WebSocket server.
 pub(super) struct ConnectedClient {
     id: ClientId,
     addr: SocketAddr,
@@ -69,6 +70,9 @@ pub(super) struct ConnectedClient {
     control_plane_tx: flume::Sender<Message>,
     service_call_sem: Semaphore,
     fetch_asset_sem: Semaphore,
+    /// Caps the number of in-flight parameter handler invocations (get + set combined) per
+    /// client. Subscribe / unsubscribe are bookkeeping-only and not gated.
+    parameter_sem: Semaphore,
     /// Subscriptions from this client
     subscriptions: parking_lot::Mutex<BiHashMap<ChannelId, SubscriptionId>>,
     /// Channels advertised by this client
@@ -127,7 +131,19 @@ impl Sink for ConnectedClient {
     }
 
     fn remove_channel(&self, channel: &RawChannel) {
+        let had_subscription = self
+            .subscriptions
+            .lock()
+            .remove_by_left(&channel.id())
+            .is_some();
         self.unadvertise_channel(channel.id());
+        // Fire on_unsubscribe after the channel has been unadvertised.
+        if had_subscription {
+            let server = self.server.upgrade();
+            if let Some(handler) = server.as_ref().and_then(|s| s.listener()) {
+                handler.on_unsubscribe(Client::new(self), channel.into());
+            }
+        }
     }
 
     fn auto_subscribe(&self) -> bool {
@@ -167,6 +183,7 @@ impl ConnectedClient {
             control_plane_tx,
             service_call_sem: Semaphore::new(DEFAULT_SERVICE_CALLS_PER_CLIENT),
             fetch_asset_sem: Semaphore::new(DEFAULT_FETCH_ASSET_CALLS_PER_CLIENT),
+            parameter_sem: Semaphore::new(DEFAULT_PARAMETER_CALLS_PER_CLIENT),
             subscriptions: parking_lot::Mutex::default(),
             advertised_channels: parking_lot::Mutex::default(),
             server: server.clone(),
@@ -225,7 +242,7 @@ impl ConnectedClient {
                 return;
             }
             Err(ParseError::UnhandledMessageType) => {
-                tracing::debug!("Unhandled websocket message: {message:?}");
+                tracing::debug!("Unhandled WebSocket message: {message:?}");
                 return;
             }
             Err(err) => {
@@ -499,6 +516,19 @@ impl ConnectedClient {
             return;
         }
 
+        // ParameterHandler takes precedence over the deprecated ServerListener callbacks.
+        if let Some(handler) = server.parameter_handler() {
+            let Some(guard) = self.parameter_sem.try_acquire() else {
+                self.send_error("Too many concurrent parameter requests".to_string());
+                return;
+            };
+            let client = AnyClient::from_websocket(Client::new(self));
+            let responder = GetParametersResponder::new(client.clone(), request_id.clone(), guard);
+            handler.get(client, param_names, request_id, responder);
+            return;
+        }
+
+        #[allow(deprecated)]
         if let Some(handler) = server.listener() {
             let parameters =
                 handler.on_get_parameters(Client::new(self), param_names, request_id.as_deref());
@@ -517,6 +547,19 @@ impl ConnectedClient {
             return;
         }
 
+        // ParameterHandler takes precedence over the deprecated ServerListener callbacks.
+        if let Some(handler) = server.parameter_handler() {
+            let Some(guard) = self.parameter_sem.try_acquire() else {
+                self.send_error("Too many concurrent parameter requests".to_string());
+                return;
+            };
+            let client = AnyClient::from_websocket(Client::new(self));
+            let responder = SetParametersResponder::new(client.clone(), request_id.clone(), guard);
+            handler.set(client, parameters, request_id, responder);
+            return;
+        }
+
+        #[allow(deprecated)]
         let updated_parameters = if let Some(handler) = server.listener() {
             let updated =
                 handler.on_set_parameters(Client::new(self), parameters, request_id.as_deref());
@@ -637,7 +680,11 @@ impl ConnectedClient {
         };
 
         if let Some(handler) = server.fetch_asset_handler() {
-            let asset_responder = AssetResponder::new(Client::new(self), request_id, guard);
+            let asset_responder = AssetResponder::new(
+                AnyClient::from_websocket(Client::new(self)),
+                request_id,
+                guard,
+            );
             handler.fetch(uri, asset_responder);
         } else {
             tracing::error!("Server advertised the Assets capability without providing a handler");

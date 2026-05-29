@@ -1,19 +1,25 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Display, future::Future, sync::Arc, time::Duration};
 
 use indexmap::IndexSet;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
 use crate::{
-    ChannelDescriptor, Context, FoxgloveError, SinkChannelFilter,
+    ChannelDescriptor, Context, FoxgloveError, SinkChannelFilter, SinkId,
     protocol::v2::parameter::Parameter,
+    remote_common::AnyClient,
+    remote_common::connection_graph::ConnectionGraph,
+    remote_common::fetch_asset::{AssetHandler, AsyncAssetHandlerFn, BlockingAssetHandlerFn},
     remote_common::service::{Service, ServiceMap},
     runtime::get_runtime_handle,
     sink_channel_filter::SinkChannelFilterFn,
 };
 
+use super::qos::{QosClassifier, QosClassifierFn, QosProfile};
+
 use super::connection::{ConnectionParams, ConnectionStatus, RemoteAccessConnection};
 use super::{Capability, Listener};
+use crate::remote_common::parameters::ParameterHandler;
 
 /// A handle to the remote access gateway connection.
 ///
@@ -38,6 +44,12 @@ impl GatewayHandle {
     /// Returns the current connection status.
     pub fn connection_status(&self) -> ConnectionStatus {
         self.connection.status()
+    }
+
+    /// Returns the sink ID of the current session, if one is active.
+    #[doc(hidden)]
+    pub fn sink_id(&self) -> Option<SinkId> {
+        self.connection.sink_id()
     }
 
     /// Adds new services, and advertises them to all connected participants.
@@ -66,6 +78,32 @@ impl GatewayHandle {
         self.connection.publish_parameter_values(parameters);
     }
 
+    /// Publishes a status message to all connected participants.
+    ///
+    /// This can be used to communicate information, warnings, and errors to the Foxglove app. An
+    /// ID may be included in the status to later remove it by referencing that ID.
+    pub fn publish_status(&self, status: super::Status) {
+        self.connection.publish_status(status);
+    }
+
+    /// Removes status messages by ID from all connected participants.
+    pub fn remove_status(&self, status_ids: Vec<String>) {
+        self.connection.remove_status(status_ids);
+    }
+
+    /// Publishes a [ConnectionGraph] update to all subscribed clients.
+    ///
+    /// Requires the [`ConnectionGraph`](Capability::ConnectionGraph) capability.
+    ///
+    /// The update is published as a difference from the current graph to `replacement_graph`.
+    /// When a client first subscribes to connection graph updates, it receives the current graph.
+    pub fn publish_connection_graph(
+        &self,
+        replacement_graph: ConnectionGraph,
+    ) -> Result<(), FoxgloveError> {
+        self.connection.replace_connection_graph(replacement_graph)
+    }
+
     /// Gracefully disconnect from the remote access connection, if connected.
     ///
     /// Returns a JoinHandle that will allow waiting until the connection has been fully closed.
@@ -84,11 +122,13 @@ impl GatewayHandle {
             listener: None,
             capabilities: Vec::new(),
             supported_encodings: None,
+            fetch_asset_handler: None,
+            parameter_handler: None,
             runtime: runtime.clone(),
             channel_filter: None,
+            qos_classifier: None,
             server_info: None,
             message_backlog_size: None,
-            pending_client_reader_timeout: None,
             context: std::sync::Weak::new(),
         };
         let services = Arc::new(parking_lot::RwLock::new(ServiceMap::default()));
@@ -129,11 +169,13 @@ pub struct Gateway {
     capabilities: Vec<Capability>,
     supported_encodings: Option<IndexSet<String>>,
     services: HashMap<String, Service>,
+    fetch_asset_handler: Option<Arc<dyn AssetHandler>>,
+    parameter_handler: Option<Arc<dyn ParameterHandler>>,
     runtime: Option<Handle>,
     channel_filter: Option<Arc<dyn SinkChannelFilter>>,
+    qos_classifier: Option<Arc<dyn QosClassifier>>,
     server_info: Option<HashMap<String, String>>,
     message_backlog_size: Option<usize>,
-    pending_client_reader_timeout: Option<Duration>,
     context: std::sync::Weak<Context>,
 }
 
@@ -148,11 +190,13 @@ impl Default for Gateway {
             capabilities: Vec::new(),
             supported_encodings: None,
             services: HashMap::new(),
+            fetch_asset_handler: None,
+            parameter_handler: None,
             runtime: None,
             channel_filter: None,
+            qos_classifier: None,
             server_info: None,
             message_backlog_size: None,
-            pending_client_reader_timeout: None,
             context: Arc::downgrade(&Context::get_default()),
         }
     }
@@ -160,8 +204,8 @@ impl Default for Gateway {
 
 impl std::fmt::Debug for Gateway {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Gateway")
-            .field("name", &self.name)
+        let mut dbg = f.debug_struct("Gateway");
+        dbg.field("name", &self.name)
             .field("has_device_token", &self.device_token.is_some())
             .field("foxglove_api_url", &self.foxglove_api_url)
             .field("foxglove_api_timeout", &self.foxglove_api_timeout)
@@ -169,12 +213,18 @@ impl std::fmt::Debug for Gateway {
             .field("capabilities", &self.capabilities)
             .field("supported_encodings", &self.supported_encodings)
             .field("num_services", &self.services.len())
+            .field(
+                "has_fetch_asset_handler",
+                &self.fetch_asset_handler.is_some(),
+            )
+            .field("has_parameter_handler", &self.parameter_handler.is_some())
             .field("has_runtime", &self.runtime.is_some())
             .field("has_channel_filter", &self.channel_filter.is_some())
+            .field("has_qos_classifier", &self.qos_classifier.is_some())
             .field("server_info", &self.server_info)
             .field("message_backlog_size", &self.message_backlog_size)
-            .field("has_context", &(self.context.strong_count() > 0))
-            .finish()
+            .field("has_context", &(self.context.strong_count() > 0));
+        dbg.finish()
     }
 }
 
@@ -272,22 +322,15 @@ impl Gateway {
         self
     }
 
-    /// Set the message backlog size.
+    /// Set the per-participant control plane message queue size.
     ///
-    /// The sink buffers outgoing log entries into a queue. If the backlog size is exceeded, the
-    /// oldest entries will be dropped.
+    /// Each participant gets an independent queue of this size. If a participant's
+    /// queue fills up (because it is not reading fast enough), it will be disconnected
+    /// and asked to reconnect.
     ///
-    /// By default, the sink will buffer 1024 messages.
+    /// By default, each participant gets a queue of 1024 messages.
     pub fn message_backlog_size(mut self, size: usize) -> Self {
         self.message_backlog_size = Some(size);
-        self
-    }
-
-    /// How long to wait for a matching Client Advertise before rejecting a
-    /// `client-ch-{channelId}` byte stream. Defaults to 15 seconds.
-    #[doc(hidden)]
-    pub fn pending_client_reader_timeout(mut self, timeout: Duration) -> Self {
-        self.pending_client_reader_timeout = Some(timeout);
         self
     }
 
@@ -297,6 +340,26 @@ impl Gateway {
         filter: impl Fn(&ChannelDescriptor) -> bool + Sync + Send + 'static,
     ) -> Self {
         self.channel_filter = Some(Arc::new(SinkChannelFilterFn(filter)));
+        self
+    }
+
+    /// Sets a [`QosClassifier`] for assigning quality-of-service profiles to channels.
+    ///
+    /// The classifier is invoked when channels are registered and determines how data for
+    /// each channel is delivered to remote participants.
+    ///
+    /// If not set, all channels use the default [`QosProfile`].
+    pub fn qos_classifier(mut self, classifier: Arc<dyn QosClassifier>) -> Self {
+        self.qos_classifier = Some(classifier);
+        self
+    }
+
+    /// Sets a QoS classifier function. See [`QosClassifier`] for more information.
+    pub fn qos_classifier_fn(
+        mut self,
+        classifier: impl Fn(&ChannelDescriptor) -> QosProfile + Sync + Send + 'static,
+    ) -> Self {
+        self.qos_classifier = Some(Arc::new(QosClassifierFn(classifier)));
         self
     }
 
@@ -314,6 +377,45 @@ impl Gateway {
         self
     }
 
+    /// Configure the handler for fetching assets.
+    /// There can only be one asset handler, exclusive with the other fetch_asset_handler methods.
+    pub fn fetch_asset_handler(mut self, handler: Arc<dyn AssetHandler>) -> Self {
+        self.fetch_asset_handler = Some(handler);
+        self
+    }
+
+    /// Configure a synchronous, blocking function as a fetch asset handler.
+    /// There can only be one asset handler, exclusive with the other fetch_asset_handler methods.
+    pub fn fetch_asset_handler_blocking_fn<F, T, Err>(mut self, handler: F) -> Self
+    where
+        F: Fn(AnyClient, String) -> Result<T, Err> + Send + Sync + 'static,
+        T: AsRef<[u8]>,
+        Err: Display,
+    {
+        self.fetch_asset_handler = Some(Arc::new(BlockingAssetHandlerFn(Arc::new(handler))));
+        self
+    }
+
+    /// Configure an asynchronous function as a fetch asset handler.
+    /// There can only be one asset handler, exclusive with the other fetch_asset_handler methods.
+    pub fn fetch_asset_handler_async_fn<F, Fut, T, Err>(mut self, handler: F) -> Self
+    where
+        F: Fn(AnyClient, String) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<T, Err>> + Send + 'static,
+        T: AsRef<[u8]>,
+        Err: Display,
+    {
+        self.fetch_asset_handler = Some(Arc::new(AsyncAssetHandlerFn(Arc::new(handler))));
+        self
+    }
+
+    /// Configure the handler for client-initiated parameter operations. When set, takes
+    /// precedence over the deprecated parameter callbacks on [`Listener`].
+    pub fn parameter_handler(mut self, handler: Arc<dyn ParameterHandler>) -> Self {
+        self.parameter_handler = Some(handler);
+        self
+    }
+
     /// Starts the remote access gateway, which will establish a connection in the background.
     ///
     /// Returns a handle that can optionally be used to manage the gateway.
@@ -323,6 +425,8 @@ impl Gateway {
     /// Returns an error if no device token is provided and the `FOXGLOVE_DEVICE_TOKEN`
     /// environment variable is not set.
     pub fn start(mut self) -> Result<GatewayHandle, FoxgloveError> {
+        crate::crypto::install_default_crypto_provider();
+
         let device_token = self
             .device_token
             .or_else(|| std::env::var(FOXGLOVE_DEVICE_TOKEN_ENV).ok())
@@ -366,6 +470,24 @@ impl Gateway {
                 }
             }
         }
+        // If the gateway was declared with a fetch asset handler, automatically add the "assets" capability.
+        if self.fetch_asset_handler.is_some() && !self.capabilities.contains(&Capability::Assets) {
+            self.capabilities.push(Capability::Assets);
+        }
+        // If the gateway was declared with a parameter handler, automatically add the "parameters" capability.
+        if self.parameter_handler.is_some() && !self.capabilities.contains(&Capability::Parameters)
+        {
+            self.capabilities.push(Capability::Parameters);
+        }
+        // Conversely, the "assets" capability requires a fetch asset handler.
+        if self.capabilities.contains(&Capability::Assets) && self.fetch_asset_handler.is_none() {
+            return Err(FoxgloveError::ConfigurationError(
+                "The Assets capability requires a fetch asset handler. \
+                 Use fetch_asset_handler(), fetch_asset_handler_blocking_fn(), \
+                 or fetch_asset_handler_async_fn()."
+                    .to_string(),
+            ));
+        }
         let runtime = self.runtime.unwrap_or_else(get_runtime_handle);
         let services = Arc::new(parking_lot::RwLock::new(ServiceMap::from_iter(
             self.services.into_values(),
@@ -378,11 +500,13 @@ impl Gateway {
             listener: self.listener,
             capabilities: self.capabilities,
             supported_encodings: self.supported_encodings,
+            fetch_asset_handler: self.fetch_asset_handler,
+            parameter_handler: self.parameter_handler,
             runtime: runtime.clone(),
             channel_filter: self.channel_filter,
+            qos_classifier: self.qos_classifier,
             server_info: self.server_info,
             message_backlog_size: self.message_backlog_size,
-            pending_client_reader_timeout: self.pending_client_reader_timeout,
             context: self.context,
         };
         let connection = RemoteAccessConnection::new(params, services);
@@ -428,5 +552,15 @@ mod tests {
             result,
             Err(FoxgloveError::MissingRequestEncoding(_))
         ));
+    }
+
+    #[test]
+    fn test_assets_capability_without_handler() {
+        // Advertising the Assets capability without a handler is a configuration error.
+        let result = Gateway::new()
+            .device_token("test-token")
+            .capabilities([Capability::Assets])
+            .start();
+        assert!(matches!(result, Err(FoxgloveError::ConfigurationError(_))));
     }
 }

@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use remote_access::start_gateway;
 use std::sync::{Arc, OnceLock};
 #[cfg(not(target_family = "wasm"))]
+use system_info::{PySystemInfoPublisher, start_sysinfo_publisher};
+#[cfg(not(target_family = "wasm"))]
 use websocket::start_server;
 
 mod errors;
@@ -27,8 +29,12 @@ mod logging;
 mod mcap;
 #[cfg(feature = "remote-access")]
 mod remote_access;
+#[cfg(not(target_family = "wasm"))]
+mod remote_common;
 mod schemas_wkt;
 mod sink_channel_filter;
+#[cfg(not(target_family = "wasm"))]
+mod system_info;
 #[cfg(not(target_family = "wasm"))]
 mod websocket;
 
@@ -256,6 +262,8 @@ fn open_mcap(
     channel_filter: Option<Py<PyAny>>,
     writer_options: Option<PyMcapWriteOptions>,
 ) -> PyResult<PyMcapWriter> {
+    init_logging(py, None);
+
     let file = match path {
         PathOrFileLike::Path(path) => WriterInner::File(if allow_overwrite {
             File::create(path)?
@@ -295,7 +303,7 @@ fn get_channel_for_topic(topic: &str) -> PyResult<Option<BaseChannel>> {
 
 // Not public. Re-exported in a wrapping function.
 #[pyfunction]
-fn enable_logging(level: u32) -> PyResult<()> {
+fn enable_logging(py: Python<'_>, level: u32) -> PyResult<()> {
     // SDK will not log at levels "CRITICAL" or higher.
     // https://docs.python.org/3/library/logging.html#logging-levels
     let level = match level {
@@ -306,7 +314,7 @@ fn enable_logging(level: u32) -> PyResult<()> {
         10.. => LevelFilter::Debug,
         0.. => LevelFilter::Trace,
     };
-    log::set_max_level(level);
+    init_logging(py, Some(level));
     Ok(())
 }
 
@@ -329,13 +337,16 @@ fn shutdown(#[allow(unused_variables)] py: Python<'_>) {
 #[pymodule]
 fn _foxglove_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     foxglove::library_version::set_sdk_language("python");
-    init_logging();
     m.add_function(wrap_pyfunction!(enable_logging, m)?)?;
     m.add_function(wrap_pyfunction!(disable_logging, m)?)?;
     m.add_function(wrap_pyfunction!(shutdown, m)?)?;
     m.add_function(wrap_pyfunction!(open_mcap, m)?)?;
     #[cfg(not(target_family = "wasm"))]
     m.add_function(wrap_pyfunction!(start_server, m)?)?;
+    #[cfg(not(target_family = "wasm"))]
+    m.add_function(wrap_pyfunction!(start_sysinfo_publisher, m)?)?;
+    #[cfg(not(target_family = "wasm"))]
+    m.add_class::<PySystemInfoPublisher>()?;
     #[cfg(feature = "remote-access")]
     m.add_function(wrap_pyfunction!(start_gateway, m)?)?;
     m.add_function(wrap_pyfunction!(get_channel_for_topic, m)?)?;
@@ -344,6 +355,19 @@ fn _foxglove_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyContext>()?;
     m.add_class::<PySinkChannelFilter>()?;
     m.add_class::<PyChannelDescriptor>()?;
+    // Shared types used by both websocket and remote_access.
+    #[cfg(not(target_family = "wasm"))]
+    {
+        m.add_class::<remote_common::PyConnectionGraph>()?;
+        m.add_class::<remote_common::PyMessageSchema>()?;
+        m.add_class::<remote_common::PyParameter>()?;
+        m.add_class::<remote_common::PyParameterType>()?;
+        m.add_class::<remote_common::PyParameterValue>()?;
+        m.add_class::<remote_common::PyService>()?;
+        m.add_class::<remote_common::PyServiceRequest>()?;
+        m.add_class::<remote_common::PyServiceSchema>()?;
+        m.add_class::<remote_common::PyStatusLevel>()?;
+    }
     // Register nested modules.
     messages::register_submodule(m)?;
     channels::register_submodule(m)?;

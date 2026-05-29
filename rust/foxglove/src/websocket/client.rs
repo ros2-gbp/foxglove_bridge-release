@@ -1,14 +1,18 @@
 use std::sync::Weak;
 
+use super::Parameter;
 use super::Status;
 use super::connected_client::ConnectedClient;
 use crate::SinkId;
-pub use crate::remote_common::ClientId;
+use crate::remote_common::ClientId;
+use crate::remote_common::fetch_asset::SendAssetResponse;
+use crate::remote_common::parameters::SendParameterResponse;
 
-/// A connected client session with the websocket server.
+/// A connected client session with the WebSocket server.
 #[derive(Debug, Clone)]
 pub struct Client {
     id: ClientId,
+    sink_id: SinkId,
     client: Weak<ConnectedClient>,
 }
 
@@ -16,6 +20,7 @@ impl Client {
     pub(super) fn new(client: &ConnectedClient) -> Self {
         Self {
             id: client.id(),
+            sink_id: client.sink_id(),
             client: client.weak().clone(),
         }
     }
@@ -25,9 +30,9 @@ impl Client {
         self.id
     }
 
-    /// Returns the client's sink ID
+    /// Returns the client's sink ID.
     pub fn sink_id(&self) -> Option<SinkId> {
-        self.client.upgrade().map(|client| client.sink_id())
+        Some(self.sink_id)
     }
 
     /// Send a status message to this client. Does nothing if client is disconnected.
@@ -36,14 +41,23 @@ impl Client {
             client.send_status(status);
         }
     }
+}
 
-    /// Send a fetch asset response to the client. Does nothing if client is disconnected.
-    pub(crate) fn send_asset_response(&self, result: Result<&[u8], &str>, request_id: u32) {
+impl SendAssetResponse for Client {
+    fn send_asset_response(&self, result: Result<&[u8], &str>, request_id: u32) {
         if let Some(client) = self.client.upgrade() {
             match result {
                 Ok(asset) => client.send_asset_response(asset, request_id),
                 Err(err) => client.send_asset_error(err, request_id),
             }
+        }
+    }
+}
+
+impl SendParameterResponse for Client {
+    fn send_parameter_values(&self, parameters: Vec<Parameter>, request_id: Option<String>) {
+        if let Some(client) = self.client.upgrade() {
+            client.update_parameters(parameters, request_id);
         }
     }
 }

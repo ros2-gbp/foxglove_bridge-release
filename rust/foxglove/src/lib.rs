@@ -239,17 +239,17 @@
 //! # }
 //! ```
 //!
-//! ### Live visualization server
+//! ### WebSocket server
 //!
-//! You can use the SDK to publish messages to the Foxglove app.
+//! You can use the SDK to publish messages to the Foxglove app over a local WebSocket connection.
 //!
 //! Note: this requires the `websocket` feature, which is enabled by default.
 //!
-//! Use [`WebSocketServer::new`] to create a new live visualization server. By default, the server
+//! Use [`WebSocketServer::new`] to create a new WebSocket server. By default, the server
 //! listens on `127.0.0.1:8765`. Once the server is configured, call [`WebSocketServer::start`] to
-//! start the server, and begin accepting websocket connections from the Foxglove app.
+//! start the server, and begin accepting WebSocket connections from the Foxglove app.
 //!
-//! Each client that connects to the websocket server is its own independent sink. The sink is
+//! Each client that connects to the WebSocket server is its own independent sink. The sink is
 //! dynamically added to the [`Context`] associated with the server when the client connects, and
 //! removed from the context when the client disconnects.
 //!
@@ -269,43 +269,132 @@
 //!     .bind("127.0.0.1", 9999)
 //!     .start()
 //!     .await
-//!     .expect("Failed to start visualization server");
+//!     .expect("Failed to start WebSocket server");
 //!
 //! // Log stuff here.
 //!
-//! server.stop();
+//! server.stop().wait().await;
 //! # }
 //! ```
+//!
+//! ### Remote access gateway
+//!
+//! You can use the SDK to publish messages to the Foxglove app over a remote WebRTC connection,
+//! using the Foxglove remote access service.
+//!
+//! Note: this requires the `remote-access` feature, which is not enabled by default.
+//!
+//! Use [`remote_access::Gateway::new`] to create a new remote access gateway. You must provide a
+//! device token to authenticate with the Foxglove API; this can be set via the builder or with
+//! the `FOXGLOVE_DEVICE_TOKEN` environment variable.
+//!
+//! Once started, the gateway connects to the Foxglove platform and makes the device available for
+//! remote visualization and teleop. The gateway acts as a single sink on the [`Context`], registered
+//! when the gateway starts and unregistered when it stops.
+//!
+//! The gateway handle can safely be dropped and the connection will continue to run. Use
+//! [`stop`](`remote_access::GatewayHandle::stop`) to shut down the gateway explicitly.
+//!
+//! ```no_run
+//! # #[cfg(feature = "remote-access")]
+//! # async fn func() {
+//! use foxglove::remote_access::Gateway;
+//!
+//! let gateway = Gateway::new()
+//!     .name("R2-D2")
+//!     .start()
+//!     .expect("Failed to start remote access gateway");
+//!
+//! // Log stuff here.
+//!
+//! gateway.stop().await.expect("Failed to stop remote access gateway");
+//! # }
+//! ```
+//!
+//! #### NVENC hardware acceleration
+//!
+//! When available, NVIDIA NVENC is used to accelerate H.264 video encoding for the remote
+//! access gateway. Without it, the gateway falls back to software H.264 encoding, which is
+//! slower and lower quality.
+//!
+//! NVENC is available on Linux for x86_64, arm, and aarch64. It requires `cuda.h` to be present
+//! at `/usr/local/cuda/include/cuda.h` or at $CUDA_HOME/include/cuda.h if you set `CUDA_HOME`.
+//!
+//! On Ubuntu you can install the headers with `apt install nvidia-cuda-toolkit` or `apt install nvidia-cuda-dev`.
+//! If that places `cuda.h` at `/usr/include/cuda.h` rather than `/usr/local/cuda/include/`,
+//! you will also need to set `CUDA_HOME=/usr` so the build can find it.
+//!
+//! You can enable the `require-cuda` feature on this crate to make it a build error if
+//! `remote-access` is disabled, the target does not support NVENC, or `cuda.h` is not
+//! found on a target where NVENC would be built.
 //!
 //! # Feature flags
 //!
 //! The Foxglove SDK defines the following feature flags:
 //!
+//! - `aws-lc-rs`: selects [aws-lc-rs] as the rustls crypto backend used for TLS. Enabled by
+//!   default. Mutually exclusive with `ring`. See [Crypto backend](#crypto-backend).
 //! - `chrono`: enables [chrono] conversions for [`Duration`][crate::messages::Duration] and
 //!   [`Timestamp`][crate::messages::Timestamp].
 //! - `derive`: enables the use of `#[derive(Encode)]` to derive the [`Encode`] trait for logging
 //!   custom structs. Enabled by default.
-//! - `live_visualization`: deprecated alias for `websocket`.
+//! - `full`: the full set of supported features, with opinionated picks for mutually exclusive
+//!   choices.
 //! - `lz4`: enables support for the LZ4 compression algorithm for mcap files. Enabled by default.
+//! - `remote-access`: enables the remote access gateway for live visualization and teleop via
+//!   WebRTC. Requires a crypto backend; `aws-lc-rs` is enabled by default.
+//! - `require-cuda`: opts into a build-time check that `cuda.h` is present on targets where
+//!   webrtc-sys would build NVENC support. Requires `remote-access` to also be enabled.
+//!   See [NVENC hardware acceleration](#nvenc-hardware-acceleration).
+//! - `ring`: selects [ring] as the rustls crypto backend used for TLS. Alternative to
+//!   `aws-lc-rs`; mutually exclusive with it. See [Crypto backend](#crypto-backend).
 //! - `schemars`: provides a blanket implementation of the [`Encode`] trait for types that
 //!   implement [`Serialize`](serde::Serialize) and [`JsonSchema`][jsonschema-trait].
 //! - `serde`: derives [`Serialize`](serde::Serialize) and [`Deserialize`](serde::Deserialize) for
 //!   all [message types](crate::messages).
 //! - `unstable`: features which are under active development and likely to change in an upcoming
 //!   version.
-//! - `websocket`: enables the websocket server and client for live visualization. Enabled by
+//! - `websocket`: enables the WebSocket server and client for live visualization. Enabled by
 //!   default.
 //! - `zstd`: enables support for the zstd compression algorithm for mcap files. Enabled by
 //!   default.
 //!
-//! If you do not require websocket features, you can disable that flag to reduce the
+//! If you do not require WebSocket features, you can disable that flag to reduce the
 //! compiled size of the SDK.
+//!
+//! ## Crypto backend
+//!
+//! The `remote-access` and `websocket-tls` features rely on [rustls] for TLS, which requires
+//! a crypto provider to be installed as the process-wide default. The `aws-lc-rs` and `ring`
+//! crate features select which backend Foxglove installs and are **mutually exclusive**:
+//! enabling both is a compile error. `aws-lc-rs` is in the default feature set, so opting
+//! into TLS with default features just works:
+//!
+//! ```toml
+//! foxglove = { version = "...", features = ["remote-access"] }
+//! ```
+//!
+//! [ring] is offered as an alternative for targets where building aws-lc-sys is impractical
+//! (e.g. the iOS simulator). To use it, disable default features and select `ring` explicitly:
+//!
+//! ```toml
+//! foxglove = { version = "...", default-features = false, features = ["remote-access", "ring", ...] }
+//! ```
+//!
+//! Foxglove installs the selected provider before opening any TLS connections. Applications
+//! that want to install a different provider should call
+//! [`rustls::crypto::CryptoProvider::install_default`] themselves before any Foxglove TLS code
+//! runs.
+//!
+//! [aws-lc-rs]: https://github.com/aws/aws-lc-rs
+//! [ring]: https://github.com/briansmith/ring
+//! [rustls]: https://github.com/rustls/rustls
 //!
 //! # Requirements
 //!
-//! With the `websocket` feature (enabled by default), the Foxglove SDK depends on [tokio]
-//! as its async runtime. See [`WebSocketServer`] for more information. Refer to the tokio
-//! documentation for more information about how to configure your application to use tokio.
+//! With the `websocket` or `remote-access` features, the Foxglove SDK depends on [tokio]
+//! as its async runtime. Refer to the tokio documentation for more information about how to
+//! configure your application to use tokio.
 //!
 //! [chrono]: https://docs.rs/chrono/latest/chrono/
 //! [tokio]: https://docs.rs/tokio/latest/tokio/
@@ -336,7 +425,7 @@ pub mod protobuf;
 mod schema;
 
 /// Deprecated: Use [`messages`] instead.
-#[deprecated(since = "0.20.0", note = "Use foxglove::messages instead.")]
+#[deprecated(since = "0.21.0", note = "Use foxglove::messages instead.")]
 pub mod schemas {
     pub use crate::messages::*;
 }
@@ -382,7 +471,7 @@ pub use sink_channel_filter::SinkChannelFilter;
 pub use std::collections::BTreeMap;
 pub(crate) use time::nanoseconds_since_epoch;
 
-// Common dependencies for remote-access & websocket, with docsrs attributes to ensure that the
+// Common dependencies for remote-access & WebSocket, with docsrs attributes to ensure that the
 // feature gate badges in docs.rs render as the public features, as opposed to _remote-common. This
 // is only needed for modules that contain types which are publicly re-exported (Parameter,
 // Service, etc.).
@@ -396,21 +485,26 @@ mod protocol;
     docsrs,
     doc(cfg(any(feature = "remote-access", feature = "websocket")))
 )]
-mod remote_common;
-#[cfg(feature = "_remote-common")]
+pub mod remote_common;
+#[cfg(any(feature = "_remote-common", feature = "sysinfo"))]
 mod runtime;
-#[cfg(feature = "_remote-common")]
+#[cfg(any(feature = "_remote-common", feature = "sysinfo"))]
 #[cfg_attr(
     docsrs,
-    doc(cfg(any(feature = "remote-access", feature = "websocket")))
+    doc(cfg(any(feature = "remote-access", feature = "websocket", feature = "sysinfo")))
 )]
 pub use runtime::shutdown_runtime;
 
+#[cfg(any(feature = "websocket-tls", feature = "remote-access"))]
+mod crypto;
+
 #[cfg(feature = "remote-access")]
 mod api_client;
-#[doc(hidden)]
 #[cfg(feature = "remote-access")]
 pub mod remote_access;
+
+#[cfg(feature = "sysinfo")]
+pub mod system_info;
 
 #[cfg(feature = "websocket")]
 pub mod websocket;
