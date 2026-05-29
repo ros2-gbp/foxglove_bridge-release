@@ -57,6 +57,32 @@ def test_explicit_close(tmp_mcap: Path) -> None:
     assert tmp_mcap.stat().st_size > size_before_close
 
 
+def test_log_zero_length_messages_round_trip(tmp_mcap: Path) -> None:
+    """Zero-length messages should be logged successfully and read back from MCAP."""
+    import mcap.reader
+    from foxglove import Schema
+
+    raw_chan = Channel(
+        "raw-empty",
+        message_encoding="raw",
+        schema=Schema(name="raw", encoding="raw", data=b""),
+    )
+    with open_mcap(tmp_mcap):
+        raw_chan.log(b"")
+        raw_chan.log(b"non-empty")
+        raw_chan.log(b"")
+
+    with open(tmp_mcap, "rb") as f:
+        reader = mcap.reader.make_reader(f)
+        payloads = [
+            message.data
+            for _, channel, message in reader.iter_messages()
+            if channel.topic == "raw-empty"
+        ]
+
+    assert payloads == [b"", b"non-empty", b""]
+
+
 def test_context_manager(tmp_mcap: Path) -> None:
     with open_mcap(tmp_mcap):
         for ii in range(20):
@@ -367,6 +393,28 @@ def test_attach_after_close(tmp_mcap: Path) -> None:
             media_type="text/plain",
             data=b"test",
         )
+
+
+def test_flush_writes_data_without_closing(tmp_mcap: Path) -> None:
+    """flush() should persist buffered data while keeping the writer open."""
+    writer = open_mcap(tmp_mcap)
+    for ii in range(20):
+        chan.log({"foo": ii})
+    size_before = tmp_mcap.stat().st_size
+    writer.flush()
+    size_after = tmp_mcap.stat().st_size
+    assert size_after > size_before
+    # Writer is still open: closing should still work and grow the file further.
+    writer.close()
+    assert tmp_mcap.stat().st_size > size_after
+
+
+def test_flush_after_close(tmp_mcap: Path) -> None:
+    """flush() after close should raise."""
+    writer = open_mcap(tmp_mcap)
+    writer.close()
+    with pytest.raises(Exception):  # FoxgloveError for SinkClosed
+        writer.flush()
 
 
 # =============================================================================

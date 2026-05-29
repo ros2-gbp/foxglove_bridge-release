@@ -32,12 +32,14 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libglib2.0-dev libva-dev libwebsockets-dev
+            libglib2.0-dev libva-dev libwebsockets-dev \
+            nvidia-cuda-dev
           echo "CC=gcc" >> $GITHUB_ENV
           echo "CXX=g++" >> $GITHUB_ENV
+          echo "CUDA_HOME=/usr" >> $GITHUB_ENV
 
       - name: Build C++ SDK
-        run: make -f Container.mk build-cpp-dist
+        run: make -f Container.mk FOXGLOVE_REQUIRE_CUDA=ON build-cpp-dist
 
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v7
@@ -54,7 +56,8 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x86_64, aarch64]
-        distro: [humble, jazzy, kilted, rolling]
+        # rolling temporarily disabled while upstream changes land; re-enable when stable
+        distro: [humble, jazzy, kilted, lyrical]
         package: [bridge, msgs]
         include:
           - arch: x86_64

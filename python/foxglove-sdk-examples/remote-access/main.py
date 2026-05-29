@@ -28,7 +28,7 @@ class Listener(RemoteAccessListener):
     def on_connection_status_changed(
         self, status: RemoteAccessConnectionStatus
     ) -> None:
-        logging.info(f"Connection status: {status.name}")
+        logging.info(f"Connection status: {status}")
 
     def on_message_data(
         self,
@@ -84,7 +84,7 @@ def render_color_ramp(frame: int) -> bytes:
 
 
 def main() -> None:
-    foxglove.set_log_level(logging.INFO)
+    foxglove.set_log_level("INFO")
 
     gateway = foxglove.start_gateway(
         name="remote-access-example-python",
