@@ -1,4 +1,5 @@
 use crate::errors::PyFoxgloveError;
+use crate::logging::init_logging;
 use crate::remote_common::{
     CallbackAssetHandler, PyConnectionGraph, PyParameter, PyService, PyStatusLevel,
 };
@@ -64,6 +65,29 @@ pub enum PyPlaybackStatus {
     Paused = 1,
     Buffering = 2,
     Ended = 3,
+}
+
+#[pymethods]
+impl PyPlaybackStatus {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Playing => "Playing",
+            Self::Paused => "Paused",
+            Self::Buffering => "Buffering",
+            Self::Ended => "Ended",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Playing => 0,
+            Self::Paused => 1,
+            Self::Buffering => 2,
+            Self::Ended => 3,
+        }
+    }
 }
 
 impl From<PyPlaybackStatus> for PlaybackStatus {
@@ -133,6 +157,25 @@ impl From<PyPlaybackState> for PlaybackState {
 pub enum PyPlaybackCommand {
     Play = 0,
     Pause = 1,
+}
+
+#[pymethods]
+impl PyPlaybackCommand {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Play => "Play",
+            Self::Pause => "Pause",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Play => 0,
+            Self::Pause => 1,
+        }
+    }
 }
 
 impl From<PlaybackCommand> for PyPlaybackCommand {
@@ -462,7 +505,7 @@ impl PyServerListener {
 
 /// Start a new Foxglove WebSocket server.
 #[pyfunction]
-#[pyo3(signature = (*, name = None, host="127.0.0.1", port=8765, capabilities=None, server_listener=None, supported_encodings=None, services=None, asset_handler=None, context=None, session_id=None, channel_filter=None, playback_time_range = None))]
+#[pyo3(signature = (*, name = None, host="127.0.0.1", port=8765, capabilities=None, server_listener=None, supported_encodings=None, services=None, asset_handler=None, context=None, session_id=None, channel_filter=None, playback_time_range = None, message_backlog_size=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn start_server(
     py: Python<'_>,
@@ -478,7 +521,10 @@ pub fn start_server(
     session_id: Option<String>,
     channel_filter: Option<Py<PyAny>>,
     playback_time_range: Option<Py<PyTuple>>,
+    message_backlog_size: Option<usize>,
 ) -> PyResult<PyWebSocketServer> {
+    init_logging(py, None);
+
     let mut server = WebSocketServer::new().bind(host, port);
 
     if let Some(session_id) = session_id {
@@ -515,7 +561,7 @@ pub fn start_server(
     }
 
     if let Some(asset_handler) = asset_handler {
-        server = server.fetch_asset_handler(Box::new(CallbackAssetHandler {
+        server = server.fetch_asset_handler(Arc::new(CallbackAssetHandler {
             handler: Arc::new(asset_handler),
         }));
     }
@@ -530,6 +576,10 @@ pub fn start_server(
         let start_time = bound_time_range.get_item(0)?.extract::<u64>()?;
         let end_time = bound_time_range.get_item(1)?.extract::<u64>()?;
         server = server.playback_time_range(start_time, end_time);
+    }
+
+    if let Some(size) = message_backlog_size {
+        server = server.message_backlog_size(size);
     }
 
     let handle = py
@@ -695,6 +745,8 @@ impl PyWebSocketServer {
     /// clients as a difference from the current graph to the replacement graph. When a client first
     /// subscribes to connection graph updates, it receives the current graph.
     ///
+    /// Raises an error if the server wasn't started with Capability.ConnectionGraph.
+    ///
     /// :param graph: The connection graph to publish.
     /// :type graph: ConnectionGraph
     pub fn publish_connection_graph(&self, graph: Bound<'_, PyConnectionGraph>) -> PyResult<()> {
@@ -718,7 +770,7 @@ impl PyWebSocketServer {
 pub enum PyCapability {
     /// Allow clients to advertise channels to send data messages to the server.
     ClientPublish,
-    /// Allow clients to subscribe and make connection graph updates
+    /// Allow clients to subscribe to connection graph updates
     ConnectionGraph,
     /// Allow clients to get & set parameters.
     Parameters,
@@ -734,6 +786,33 @@ pub enum PyCapability {
     /// controls in the Foxglove app. This requires the server to specify the `data_start_time`
     /// and `data_end_time` fields in its `ServerInfo` message.
     PlaybackControl,
+}
+
+#[pymethods]
+impl PyCapability {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ClientPublish => "ClientPublish",
+            Self::ConnectionGraph => "ConnectionGraph",
+            Self::Parameters => "Parameters",
+            Self::Time => "Time",
+            Self::Services => "Services",
+            Self::PlaybackControl => "PlaybackControl",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::ClientPublish => 0,
+            Self::ConnectionGraph => 1,
+            Self::Parameters => 2,
+            Self::Time => 3,
+            Self::Services => 4,
+            Self::PlaybackControl => 5,
+        }
+    }
 }
 
 impl From<PyCapability> for foxglove::websocket::Capability {
