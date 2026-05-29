@@ -11,7 +11,8 @@ use pyo3::types::PyBytes;
 
 use crate::PyContext;
 use crate::errors::PyFoxgloveError;
-use crate::remote_common::{PyParameter, PyService, PyStatusLevel};
+use crate::logging::init_logging;
+use crate::remote_common::{PyConnectionGraph, PyParameter, PyService, PyStatusLevel};
 use crate::sink_channel_filter::{PyChannelDescriptor, PySinkChannelFilter};
 
 /// A client connected to a running remote access gateway.
@@ -56,6 +57,29 @@ pub enum PyConnectionStatus {
     Shutdown = 3,
 }
 
+#[pymethods]
+impl PyConnectionStatus {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Connecting => "Connecting",
+            Self::Connected => "Connected",
+            Self::ShuttingDown => "ShuttingDown",
+            Self::Shutdown => "Shutdown",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Connecting => 0,
+            Self::Connected => 1,
+            Self::ShuttingDown => 2,
+            Self::Shutdown => 3,
+        }
+    }
+}
+
 impl From<ConnectionStatus> for PyConnectionStatus {
     fn from(value: ConnectionStatus) -> Self {
         match value {
@@ -73,16 +97,42 @@ impl From<ConnectionStatus> for PyConnectionStatus {
 pub enum PyRemoteAccessCapability {
     /// Allow clients to advertise channels to send data messages to the server.
     ClientPublish,
+    /// Allow clients to subscribe to connection graph updates.
+    ConnectionGraph,
     /// Allow clients to get, set, and subscribe to parameter updates.
     Parameters,
     /// Allow clients to call services.
     Services,
 }
 
+#[pymethods]
+impl PyRemoteAccessCapability {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ClientPublish => "ClientPublish",
+            Self::ConnectionGraph => "ConnectionGraph",
+            Self::Parameters => "Parameters",
+            Self::Services => "Services",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::ClientPublish => 0,
+            Self::ConnectionGraph => 1,
+            Self::Parameters => 2,
+            Self::Services => 3,
+        }
+    }
+}
+
 impl From<PyRemoteAccessCapability> for Capability {
     fn from(value: PyRemoteAccessCapability) -> Self {
         match value {
             PyRemoteAccessCapability::ClientPublish => Capability::ClientPublish,
+            PyRemoteAccessCapability::ConnectionGraph => Capability::ConnectionGraph,
             PyRemoteAccessCapability::Parameters => Capability::Parameters,
             PyRemoteAccessCapability::Services => Capability::Services,
         }
@@ -226,6 +276,30 @@ impl Listener for PyRemoteAccessListener {
             tracing::error!("Callback failed: {}", err);
         }
     }
+
+    fn on_connection_graph_subscribe(&self) {
+        let result: PyResult<()> = Python::with_gil(|py| {
+            self.listener
+                .bind(py)
+                .call_method("on_connection_graph_subscribe", (), None)?;
+            Ok(())
+        });
+        if let Err(err) = result {
+            tracing::error!("Callback failed: {}", err);
+        }
+    }
+
+    fn on_connection_graph_unsubscribe(&self) {
+        let result: PyResult<()> = Python::with_gil(|py| {
+            self.listener
+                .bind(py)
+                .call_method("on_connection_graph_unsubscribe", (), None)?;
+            Ok(())
+        });
+        if let Err(err) = result {
+            tracing::error!("Callback failed: {}", err);
+        }
+    }
 }
 
 impl PyRemoteAccessListener {
@@ -336,6 +410,26 @@ impl PyRemoteAccessGateway {
         }
     }
 
+    /// Publishes a connection graph update to all subscribed clients. An update is published to
+    /// clients as a difference from the current graph to the replacement graph. When a client first
+    /// subscribes to connection graph updates, it receives the current graph.
+    ///
+    /// Raises an error if the gateway wasn't started with Capability.ConnectionGraph.
+    ///
+    /// :param graph: The connection graph to publish.
+    /// :type graph: ConnectionGraph
+    pub fn publish_connection_graph(&self, graph: Bound<'_, PyConnectionGraph>) -> PyResult<()> {
+        let Some(handle) = &self.0 else {
+            tracing::debug!("publish_connection_graph called after gateway stopped; ignoring");
+            return Ok(());
+        };
+        let graph = graph.extract::<PyConnectionGraph>()?;
+        handle
+            .publish_connection_graph(graph.into())
+            .map_err(PyFoxgloveError::from)
+            .map_err(PyErr::from)
+    }
+
     /// Gracefully disconnect from the remote access gateway.
     pub fn stop(&mut self, py: Python<'_>) {
         if let Some(handle) = self.0.take() {
@@ -352,6 +446,25 @@ pub enum PyReliability {
     Lossy,
     /// Data is sent over the reliable control channel (ordered, guaranteed delivery).
     Reliable,
+}
+
+#[pymethods]
+impl PyReliability {
+    #[getter]
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Lossy => "Lossy",
+            Self::Reliable => "Reliable",
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> i32 {
+        match self {
+            Self::Lossy => 0,
+            Self::Reliable => 1,
+        }
+    }
 }
 
 impl From<PyReliability> for Reliability {
@@ -433,6 +546,8 @@ pub fn start_gateway(
     foxglove_api_url: Option<String>,
     foxglove_api_timeout: Option<f64>,
 ) -> PyResult<PyRemoteAccessGateway> {
+    init_logging(py, None);
+
     let mut gateway = Gateway::new();
 
     if let Some(name) = name {

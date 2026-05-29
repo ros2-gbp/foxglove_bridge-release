@@ -398,6 +398,7 @@ def start_server(
     session_id: str | None = None,
     channel_filter: SinkChannelFilter | None = None,
     playback_time_range: tuple[int, int] | None = None,
+    message_backlog_size: int | None = None,
 ) -> WebSocketServer:
     """
     Start a WebSocket server for live visualization.
@@ -430,11 +431,11 @@ def start_sysinfo_publisher(
 
     Periodically publishes process and system statistics (memory, CPU, OS info) to a channel.
 
+    The caller is responsible for calling stop() on the returned handle when done; dropping the handle does not stop the background task.
+
     :param topic: Channel topic name. Defaults to ``/sysinfo``.
     :param refresh_interval: How often to publish, in seconds. Defaults to ``0.5``. Clamped to a minimum of 0.2.
     :param context: The context on which the publisher creates its channel. Defaults to the global default context.
-
-    The caller is responsible for calling stop() on the returned handle when done; dropping the handle does not stop the background task.
     """
     ...
 
