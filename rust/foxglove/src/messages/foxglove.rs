@@ -152,6 +152,31 @@ pub struct Color {
     #[prost(double, tag = "4")]
     pub a: f64,
 }
+/// A single chunk of a compressed audio bitstream
+///
+/// <https://docs.foxglove.dev/docs/visualization/message-schemas/compressed-audio>
+#[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CompressedAudio {
+    /// Timestamp of the start of the audio chunk
+    #[prost(message, optional, tag = "1")]
+    pub timestamp: ::core::option::Option<crate::messages::Timestamp>,
+    /// Compressed audio data. Packet duration is determined by the codec during encoding. Messages should generally contain approximately 20 ms of audio.
+    ///
+    /// - `opus`
+    ///    - Each message must contain a complete raw Opus packet, without Ogg, WebM, or other container framing, as described in [RFC 6716 section 3](<https://datatracker.ietf.org/doc/html/rfc6716#section-3>).
+    ///    - Each packet contains all information necessary for decoding, and may be decoded at any sample rate supported by Opus (8, 12, 16, 24, or 48 kHz).
+    ///    - A single raw Opus packet represents mono or stereo audio; multichannel Opus requires multistream or container metadata and is not supported by this schema.
+    /// - `mp4a.40.2`
+    ///    - Each message must contain a complete MPEG-4 AAC-LC ADTS frame, including the ADTS header, as described in section 1.A.3.2 of ISO/IEC 14496-3:2019.
+    ///    - The ADTS header supplies stream parameters such as sample rate and channel configuration.
+    #[prost(bytes = "bytes", tag = "2")]
+    #[cfg_attr(feature = "serde", serde(with = "crate::messages::serde_bytes"))]
+    pub data: ::prost::bytes::Bytes,
+    /// Audio format. Values supported by Foxglove are `opus` for raw Opus packets and `mp4a.40.2` for AAC-LC ADTS frames.
+    #[prost(string, tag = "3")]
+    pub format: ::prost::alloc::string::String,
+}
 /// A compressed image
 ///
 /// <https://docs.foxglove.dev/docs/visualization/message-schemas/compressed-image>
@@ -1287,7 +1312,7 @@ pub struct SceneEntity {
     /// Length of time (relative to `timestamp`) after which the entity should be automatically removed. Zero value indicates the entity should remain visible until it is replaced or deleted.
     #[prost(message, optional, tag = "4")]
     pub lifetime: ::core::option::Option<crate::messages::Duration>,
-    /// Whether the entity should keep its location in the fixed frame (false) or follow the frame specified in `frame_id` as it moves relative to the fixed frame (true)
+    /// False indicates the entity should keep its location in the fixed frame until a new entity is published. True indicates the entity should follow the frame specified in `frame_id` as it moves relative to the fixed frame when new transform messages are received.
     #[prost(bool, tag = "5")]
     pub frame_locked: bool,
     /// Additional user-provided metadata associated with the entity. Keys must be unique.
