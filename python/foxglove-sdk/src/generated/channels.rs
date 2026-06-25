@@ -16,6 +16,7 @@ pub fn register_submodule(parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<CameraCalibrationChannel>()?;
     module.add_class::<CircleAnnotationChannel>()?;
     module.add_class::<ColorChannel>()?;
+    module.add_class::<CompressedAudioChannel>()?;
     module.add_class::<CompressedImageChannel>()?;
     module.add_class::<CompressedPointCloudChannel>()?;
     module.add_class::<CompressedVideoChannel>()?;
@@ -93,7 +94,7 @@ impl ArrowPrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -125,7 +126,7 @@ impl ArrowPrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -210,7 +211,7 @@ impl CameraCalibrationChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -242,7 +243,7 @@ impl CameraCalibrationChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -327,7 +328,7 @@ impl CircleAnnotationChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -359,7 +360,7 @@ impl CircleAnnotationChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -444,7 +445,7 @@ impl ColorChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -476,7 +477,7 @@ impl ColorChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -532,12 +533,12 @@ impl ColorChannel {
     }
 }
 
-/// A channel for logging :py:class:`foxglove.messages.CompressedImage` messages.
+/// A channel for logging :py:class:`foxglove.messages.CompressedAudio` messages.
 #[pyclass(module = "foxglove.channels")]
-struct CompressedImageChannel(Channel<foxglove::messages::CompressedImage>);
+struct CompressedAudioChannel(Channel<foxglove::messages::CompressedAudio>);
 
 #[pymethods]
-impl CompressedImageChannel {
+impl CompressedAudioChannel {
     /// Create a new channel.
     ///
     /// :param topic: The topic to log messages to. You should choose a unique topic name per channel.
@@ -556,7 +557,7 @@ impl CompressedImageChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -588,7 +589,124 @@ impl CompressedImageChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
+        for (key, value) in self.0.metadata() {
+            dict.set_item(key, value)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Returns a copy of the channel's schema.
+    ///
+    /// Note that changes made to the returned object will not be applied to
+    /// the channel's schema.
+    fn schema(&self) -> Option<PySchema> {
+        self.0.schema().cloned().map(PySchema::from)
+    }
+
+    /// The name of the schema for the channel.
+    fn schema_name(&self) -> Option<&str> {
+        Some(self.0.schema()?.name.as_str())
+    }
+
+    /// Returns true if at least one sink is subscribed to this channel.
+    fn has_sinks(&self) -> bool {
+        self.0.has_sinks()
+    }
+
+    /// Close the channel.
+    ///
+    /// You can use this to explicitly unadvertise the channel to sinks that subscribe to
+    /// channels dynamically, such as the :py:class:`foxglove.websocket.WebSocketServer`.
+    ///
+    /// Attempts to log on a closed channel will elicit a throttled warning message.
+    fn close(&mut self) {
+        self.0.close();
+    }
+
+    /// Log a :py:class:`foxglove.messages.CompressedAudio` message to the channel.
+    ///
+    /// :param msg: The message to log.
+    /// :param log_time: The log time is the time, as nanoseconds from the unix epoch, that the
+    ///     message was recorded. Usually this is the time log() is called. If omitted, the
+    ///     current time is used.
+    /// :param sink_id: The ID of the sink to log to. If omitted, the message is logged to all sinks.
+    #[pyo3(signature = (msg, *, log_time=None, sink_id=None))]
+    fn log(&self, msg: &messages::CompressedAudio, log_time: Option<u64>, sink_id: Option<u64>) {
+        let metadata = PartialMetadata { log_time };
+        let sink_id = sink_id.and_then(NonZero::new).map(SinkId::new);
+
+        self.0.log_with_meta_to_sink(&msg.0, metadata, sink_id);
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CompressedAudioChannel(id={}, topic='{}')",
+            self.id(),
+            self.topic()
+        )
+        .to_string()
+    }
+}
+
+/// A channel for logging :py:class:`foxglove.messages.CompressedImage` messages.
+#[pyclass(module = "foxglove.channels")]
+struct CompressedImageChannel(Channel<foxglove::messages::CompressedImage>);
+
+#[pymethods]
+impl CompressedImageChannel {
+    /// Create a new channel.
+    ///
+    /// :param topic: The topic to log messages to. You should choose a unique topic name per channel.
+    /// :param metadata: A dictionary of key/value strings to add to the channel.
+    ///     A type error is raised if any key or value is not a string.
+    #[new]
+    #[pyo3(signature = (topic, *, metadata=None, context=None))]
+    fn new(
+        py: Python<'_>,
+        topic: &str,
+        metadata: Option<BTreeMap<String, String>>,
+        context: Option<&PyContext>,
+    ) -> Self {
+        let topic = topic.to_owned();
+        let metadata = metadata.unwrap_or_default();
+        let context = context.map(|c| c.0.clone());
+        // Release the GIL before calling build(), which may invoke
+        // PySinkChannelFilter::should_subscribe() on registered sinks.
+        let base = py.detach(move || {
+            let builder = ChannelBuilder::new(&topic).metadata(metadata);
+            let builder = if let Some(context) = context {
+                builder.context(&context)
+            } else {
+                builder
+            };
+            builder.build()
+        });
+        Self(base)
+    }
+
+    /// The unique ID of the channel.
+    fn id(&self) -> u64 {
+        self.0.id().into()
+    }
+
+    /// The topic name of the channel.
+    fn topic(&self) -> &str {
+        self.0.topic()
+    }
+
+    /// The message encoding for the channel.
+    #[getter]
+    fn message_encoding(&self) -> &str {
+        self.0.message_encoding()
+    }
+
+    /// Returns a copy of the channel's metadata.
+    ///
+    /// Note that changes made to the returned dictionary will not be applied to
+    /// the channel's metadata.
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -673,7 +791,7 @@ impl CompressedPointCloudChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -705,7 +823,7 @@ impl CompressedPointCloudChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -795,7 +913,7 @@ impl CompressedVideoChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -827,7 +945,7 @@ impl CompressedVideoChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -912,7 +1030,7 @@ impl CylinderPrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -944,7 +1062,7 @@ impl CylinderPrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1029,7 +1147,7 @@ impl CubePrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1061,7 +1179,7 @@ impl CubePrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1146,7 +1264,7 @@ impl FrameTransformChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1178,7 +1296,7 @@ impl FrameTransformChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1263,7 +1381,7 @@ impl FrameTransformsChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1295,7 +1413,7 @@ impl FrameTransformsChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1380,7 +1498,7 @@ impl GeoJsonChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1412,7 +1530,7 @@ impl GeoJsonChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1492,7 +1610,7 @@ impl GridChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1524,7 +1642,7 @@ impl GridChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1604,7 +1722,7 @@ impl VoxelGridChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1636,7 +1754,7 @@ impl VoxelGridChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1721,7 +1839,7 @@ impl ImageAnnotationsChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1753,7 +1871,7 @@ impl ImageAnnotationsChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1838,7 +1956,7 @@ impl JointStateChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1870,7 +1988,7 @@ impl JointStateChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -1955,7 +2073,7 @@ impl JointStatesChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -1987,7 +2105,7 @@ impl JointStatesChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2072,7 +2190,7 @@ impl KeyValuePairChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2104,7 +2222,7 @@ impl KeyValuePairChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2189,7 +2307,7 @@ impl LaserScanChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2221,7 +2339,7 @@ impl LaserScanChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2306,7 +2424,7 @@ impl LinePrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2338,7 +2456,7 @@ impl LinePrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2423,7 +2541,7 @@ impl LocationFixChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2455,7 +2573,7 @@ impl LocationFixChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2540,7 +2658,7 @@ impl LocationFixesChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2572,7 +2690,7 @@ impl LocationFixesChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2657,7 +2775,7 @@ impl LogChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2689,7 +2807,7 @@ impl LogChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2769,7 +2887,7 @@ impl SceneEntityDeletionChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2801,7 +2919,7 @@ impl SceneEntityDeletionChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -2891,7 +3009,7 @@ impl SceneEntityChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -2923,7 +3041,7 @@ impl SceneEntityChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3008,7 +3126,7 @@ impl SceneUpdateChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3040,7 +3158,7 @@ impl SceneUpdateChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3125,7 +3243,7 @@ impl ModelPrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3157,7 +3275,7 @@ impl ModelPrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3242,7 +3360,7 @@ impl OdometryChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3274,7 +3392,7 @@ impl OdometryChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3359,7 +3477,7 @@ impl PackedElementFieldChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3391,7 +3509,7 @@ impl PackedElementFieldChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3476,7 +3594,7 @@ impl Point2Channel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3508,7 +3626,7 @@ impl Point2Channel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3588,7 +3706,7 @@ impl Point3Channel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3620,7 +3738,7 @@ impl Point3Channel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3700,7 +3818,7 @@ impl Point3InFrameChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3732,7 +3850,7 @@ impl Point3InFrameChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3817,7 +3935,7 @@ impl PointCloudChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3849,7 +3967,7 @@ impl PointCloudChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -3934,7 +4052,7 @@ impl PointsAnnotationChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -3966,7 +4084,7 @@ impl PointsAnnotationChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4051,7 +4169,7 @@ impl PoseChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4083,7 +4201,7 @@ impl PoseChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4163,7 +4281,7 @@ impl PoseInFrameChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4195,7 +4313,7 @@ impl PoseInFrameChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4280,7 +4398,7 @@ impl PosesInFrameChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4312,7 +4430,7 @@ impl PosesInFrameChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4397,7 +4515,7 @@ impl QuaternionChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4429,7 +4547,7 @@ impl QuaternionChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4514,7 +4632,7 @@ impl RawAudioChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4546,7 +4664,7 @@ impl RawAudioChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4631,7 +4749,7 @@ impl RawImageChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4663,7 +4781,7 @@ impl RawImageChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4748,7 +4866,7 @@ impl SpherePrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4780,7 +4898,7 @@ impl SpherePrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4865,7 +4983,7 @@ impl TextAnnotationChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -4897,7 +5015,7 @@ impl TextAnnotationChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -4982,7 +5100,7 @@ impl TextPrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -5014,7 +5132,7 @@ impl TextPrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -5099,7 +5217,7 @@ impl TriangleListPrimitiveChannel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -5131,7 +5249,7 @@ impl TriangleListPrimitiveChannel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -5221,7 +5339,7 @@ impl Vector2Channel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -5253,7 +5371,7 @@ impl Vector2Channel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
@@ -5333,7 +5451,7 @@ impl Vector3Channel {
         let context = context.map(|c| c.0.clone());
         // Release the GIL before calling build(), which may invoke
         // PySinkChannelFilter::should_subscribe() on registered sinks.
-        let base = py.allow_threads(move || {
+        let base = py.detach(move || {
             let builder = ChannelBuilder::new(&topic).metadata(metadata);
             let builder = if let Some(context) = context {
                 builder.context(&context)
@@ -5365,7 +5483,7 @@ impl Vector3Channel {
     ///
     /// Note that changes made to the returned dictionary will not be applied to
     /// the channel's metadata.
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (key, value) in self.0.metadata() {
             dict.set_item(key, value)?;
