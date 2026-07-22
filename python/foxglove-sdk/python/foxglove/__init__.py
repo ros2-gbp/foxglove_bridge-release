@@ -258,6 +258,7 @@ try:
         QosProfile,
         RemoteAccessGateway,
         RemoteAccessListener,
+        VideoEncoderBackend,
     )
 
     def start_gateway(
@@ -271,9 +272,11 @@ try:
         context: Context | None = None,
         channel_filter: SinkChannelFilter | None = None,
         qos_classifier: Callable[[ChannelDescriptor], QosProfile] | None = None,
+        suppress_video_transcode: Callable[[ChannelDescriptor], bool] | None = None,
         message_backlog_size: int | None = None,
         foxglove_api_url: str | None = None,
         foxglove_api_timeout: float | None = None,
+        video_encoder: VideoEncoderBackend | None = None,
     ) -> RemoteAccessGateway:
         """
         Start a remote access gateway for live visualization and teleop in Foxglove.
@@ -294,10 +297,17 @@ try:
         :param qos_classifier: A ``Callable`` that returns the
             :py:class:`foxglove.remote_access.QosProfile` to use for a given channel. If not set,
             all channels use the default lossy profile.
+        :param suppress_video_transcode: A ``Callable`` that returns ``True`` to deliver a given
+            channel as data rather than transcoding it to video. Required for compressed depth
+            maps. If not set, all video-capable channels are transcoded.
         :param message_backlog_size: The maximum number of messages to buffer before disconnecting
             the slow client. Defaults to 1024.
         :param foxglove_api_url: Override the Foxglove API base URL.
         :param foxglove_api_timeout: Timeout for Foxglove API requests, in seconds.
+        :param video_encoder: Preferred backend for encoding published video tracks. If not set,
+            or set to :py:attr:`~foxglove.remote_access.VideoEncoderBackend.Auto`, the SDK chooses
+            (honoring the ``FOXGLOVE_VIDEO_ENCODER`` environment variable). If the requested
+            backend is unavailable, the SDK falls back to another compatible encoder.
         """
         return _foxglove.start_gateway(
             name=name,
@@ -309,9 +319,11 @@ try:
             context=context,
             channel_filter=channel_filter,
             qos_classifier=qos_classifier,
+            suppress_video_transcode=suppress_video_transcode,
             message_backlog_size=message_backlog_size,
             foxglove_api_url=foxglove_api_url,
             foxglove_api_timeout=foxglove_api_timeout,
+            video_encoder=video_encoder,
         )
 
     __all__ += ["start_gateway"]
