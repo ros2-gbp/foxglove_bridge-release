@@ -17,8 +17,10 @@ use crate::{
 };
 
 use super::qos::{QosClassifier, QosClassifierFn, QosProfile};
+use super::suppress_video_transcode::{SuppressVideoTranscode, SuppressVideoTranscodeFn};
 
 use super::connection::{ConnectionParams, ConnectionStatus, RemoteAccessConnection};
+use super::session::MIN_DATA_TRACK_MESSAGE_SIZE;
 use super::{Capability, Listener};
 use crate::remote_common::parameters::ParameterHandler;
 
@@ -128,9 +130,12 @@ impl GatewayHandle {
             runtime: runtime.clone(),
             channel_filter: None,
             qos_classifier: None,
+            suppress_video_transcode: None,
             server_info: None,
             message_backlog_size: None,
+            max_data_track_message_size: None,
             video_codec_override: None,
+            video_encoder: VideoEncoderBackend::Auto,
             context: std::sync::Weak::new(),
         };
         let services = Arc::new(parking_lot::RwLock::new(ServiceMap::default()));
@@ -158,6 +163,45 @@ const FOXGLOVE_DEVICE_TOKEN_ENV: &str = "FOXGLOVE_DEVICE_TOKEN";
 const FOXGLOVE_API_URL_ENV: &str = "FOXGLOVE_API_URL";
 const FOXGLOVE_API_TIMEOUT_ENV: &str = "FOXGLOVE_API_TIMEOUT";
 const FOXGLOVE_VIDEO_CODEC_ENV: &str = "FOXGLOVE_VIDEO_CODEC";
+const FOXGLOVE_VIDEO_ENCODER_ENV: &str = "FOXGLOVE_VIDEO_ENCODER";
+
+/// Preferred backend for encoding published video tracks.
+///
+/// This is a gateway-wide preference applied to every video track the gateway publishes.
+/// If the requested backend is unavailable on the host, libwebrtc logs a warning and falls
+/// back to another compatible encoder, so selecting an unsupported backend degrades quality
+/// rather than disabling video.
+///
+/// [`Auto`](VideoEncoderBackend::Auto) leaves the choice to the SDK and is the default.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum VideoEncoderBackend {
+    /// Let the SDK choose the encoder backend.
+    #[default]
+    Auto,
+    /// Prefer a software encoder.
+    Software,
+    /// Prefer any available hardware encoder.
+    Hardware,
+    /// Prefer NVIDIA NVENC when available.
+    Nvenc,
+    /// Prefer VAAPI when available.
+    Vaapi,
+    /// Prefer VideoToolbox on Apple platforms when available.
+    VideoToolbox,
+}
+
+impl From<VideoEncoderBackend> for livekit::options::VideoEncoderBackend {
+    fn from(backend: VideoEncoderBackend) -> Self {
+        match backend {
+            VideoEncoderBackend::Auto => Self::Auto,
+            VideoEncoderBackend::Software => Self::Software,
+            VideoEncoderBackend::Hardware => Self::Hardware,
+            VideoEncoderBackend::Nvenc => Self::Nvenc,
+            VideoEncoderBackend::Vaapi => Self::Vaapi,
+            VideoEncoderBackend::VideoToolbox => Self::VideoToolbox,
+        }
+    }
+}
 
 /// Parses a codec name from the `FOXGLOVE_VIDEO_CODEC` environment variable.
 ///
@@ -169,6 +213,21 @@ fn parse_video_codec(s: &str) -> Option<VideoCodec> {
         "h265" => Some(VideoCodec::H265),
         "vp8" => Some(VideoCodec::VP8),
         "vp9" => Some(VideoCodec::VP9),
+        _ => None,
+    }
+}
+
+/// Parses an encoder backend from the `FOXGLOVE_VIDEO_ENCODER` environment variable.
+///
+/// Accepts, case-insensitively: "auto", "software", "hardware", "nvenc", "vaapi", "videotoolbox".
+fn parse_video_encoder(s: &str) -> Option<VideoEncoderBackend> {
+    match s.to_ascii_lowercase().as_str() {
+        "auto" => Some(VideoEncoderBackend::Auto),
+        "software" => Some(VideoEncoderBackend::Software),
+        "hardware" => Some(VideoEncoderBackend::Hardware),
+        "nvenc" => Some(VideoEncoderBackend::Nvenc),
+        "vaapi" => Some(VideoEncoderBackend::Vaapi),
+        "videotoolbox" => Some(VideoEncoderBackend::VideoToolbox),
         _ => None,
     }
 }
@@ -191,8 +250,11 @@ pub struct Gateway {
     runtime: Option<Handle>,
     channel_filter: Option<Arc<dyn SinkChannelFilter>>,
     qos_classifier: Option<Arc<dyn QosClassifier>>,
+    suppress_video_transcode: Option<Arc<dyn SuppressVideoTranscode>>,
     server_info: Option<HashMap<String, String>>,
     message_backlog_size: Option<usize>,
+    max_data_track_message_size: Option<usize>,
+    video_encoder: VideoEncoderBackend,
     context: std::sync::Weak<Context>,
 }
 
@@ -212,8 +274,11 @@ impl Default for Gateway {
             runtime: None,
             channel_filter: None,
             qos_classifier: None,
+            suppress_video_transcode: None,
             server_info: None,
             message_backlog_size: None,
+            max_data_track_message_size: None,
+            video_encoder: VideoEncoderBackend::Auto,
             context: Arc::downgrade(&Context::get_default()),
         }
     }
@@ -238,8 +303,17 @@ impl std::fmt::Debug for Gateway {
             .field("has_runtime", &self.runtime.is_some())
             .field("has_channel_filter", &self.channel_filter.is_some())
             .field("has_qos_classifier", &self.qos_classifier.is_some())
+            .field(
+                "has_suppress_video_transcode",
+                &self.suppress_video_transcode.is_some(),
+            )
             .field("server_info", &self.server_info)
             .field("message_backlog_size", &self.message_backlog_size)
+            .field(
+                "max_data_track_message_size",
+                &self.max_data_track_message_size,
+            )
+            .field("video_encoder", &self.video_encoder)
             .field("has_context", &(self.context.strong_count() > 0));
         dbg.finish()
     }
@@ -351,6 +425,32 @@ impl Gateway {
         self
     }
 
+    /// Sets the maximum size in bytes of a single message published to a lossy
+    /// channel's data track. Larger messages are dropped, with a throttled
+    /// warning, rather than allowed to monopolize the shared data channel and
+    /// starve other channels.
+    ///
+    /// The limit must be at least 1200 bytes (one WebRTC data-channel packet);
+    /// [`start`](Self::start) rejects anything smaller. By default, the limit is
+    /// 100 KiB.
+    pub fn max_data_track_message_size(mut self, size: usize) -> Self {
+        self.max_data_track_message_size = Some(size);
+        self
+    }
+
+    /// Sets the preferred backend for encoding published video tracks.
+    ///
+    /// This preference applies to every video track the gateway publishes. If the requested
+    /// backend is unavailable on the host, libwebrtc falls back to another compatible encoder.
+    ///
+    /// If not set, or set to [`VideoEncoderBackend::Auto`], the backend is read from the
+    /// `FOXGLOVE_VIDEO_ENCODER` environment variable (one of: `auto`, `software`, `hardware`,
+    /// `nvenc`, `vaapi`, `videotoolbox`), ultimately falling back to [`VideoEncoderBackend::Auto`].
+    pub fn video_encoder(mut self, backend: VideoEncoderBackend) -> Self {
+        self.video_encoder = backend;
+        self
+    }
+
     /// Sets a channel filter. See [`SinkChannelFilter`] for more information.
     pub fn channel_filter_fn(
         mut self,
@@ -377,6 +477,24 @@ impl Gateway {
         classifier: impl Fn(&ChannelDescriptor) -> QosProfile + Sync + Send + 'static,
     ) -> Self {
         self.qos_classifier = Some(Arc::new(QosClassifierFn(classifier)));
+        self
+    }
+
+    /// Opts channels out of video transcoding, delivering them as data instead.
+    ///
+    /// See [`SuppressVideoTranscode`] for more information. If not set, all video-capable channels
+    /// are transcoded.
+    pub fn suppress_video_transcode(mut self, suppress: Arc<dyn SuppressVideoTranscode>) -> Self {
+        self.suppress_video_transcode = Some(suppress);
+        self
+    }
+
+    /// Sets a video-transcode opt-out function. See [`SuppressVideoTranscode`] for more information.
+    pub fn suppress_video_transcode_fn(
+        mut self,
+        suppress: impl Fn(&ChannelDescriptor) -> bool + Sync + Send + 'static,
+    ) -> Self {
+        self.suppress_video_transcode = Some(Arc::new(SuppressVideoTranscodeFn(suppress)));
         self
     }
 
@@ -446,6 +564,9 @@ impl Gateway {
     /// published video tracks; this is intended as a developer aid rather than a supported
     /// configuration surface. Selecting a codec the host cannot encode leaves viewers
     /// without video.
+    ///
+    /// The preferred video encoder backend may be set via [`Gateway::video_encoder`] or the
+    /// `FOXGLOVE_VIDEO_ENCODER` environment variable; the builder value takes precedence.
     pub fn start(mut self) -> Result<GatewayHandle, FoxgloveError> {
         crate::crypto::install_default_crypto_provider();
 
@@ -478,6 +599,27 @@ impl Gateway {
             }
             codec
         });
+        // An explicit non-Auto builder value takes precedence over the environment variable.
+        // `Auto` means "no explicit preference", so it defers to the environment variable,
+        // ultimately falling back to `Auto`; this matches how the C, C++, and ROS layers
+        // treat `Auto`.
+        let video_encoder = if self.video_encoder != VideoEncoderBackend::Auto {
+            self.video_encoder
+        } else {
+            std::env::var(FOXGLOVE_VIDEO_ENCODER_ENV)
+                .ok()
+                .and_then(|s| {
+                    let backend = parse_video_encoder(&s);
+                    if backend.is_none() {
+                        tracing::warn!(
+                            "Ignoring invalid {FOXGLOVE_VIDEO_ENCODER_ENV} value {s:?}; \
+                     expected one of: auto, software, hardware, nvenc, vaapi, videotoolbox"
+                        );
+                    }
+                    backend
+                })
+                .unwrap_or(VideoEncoderBackend::Auto)
+        };
         // If the gateway was declared with services, automatically add the "services" capability
         // and the set of supported request encodings.
         if !self.services.is_empty() {
@@ -492,16 +634,15 @@ impl Gateway {
                     encodings.insert(encoding.to_string());
                 }
             }
-            if encodings.is_empty() {
-                if let Some(svc) = self
+            if encodings.is_empty()
+                && let Some(svc) = self
                     .services
                     .values()
                     .find(|s| s.request_encoding().is_none())
-                {
-                    return Err(FoxgloveError::MissingRequestEncoding(
-                        svc.name().to_string(),
-                    ));
-                }
+            {
+                return Err(FoxgloveError::MissingRequestEncoding(
+                    svc.name().to_string(),
+                ));
             }
         }
         // If the gateway was declared with a fetch asset handler, automatically add the "assets" capability.
@@ -522,6 +663,14 @@ impl Gateway {
                     .to_string(),
             ));
         }
+        if let Some(size) = self.max_data_track_message_size
+            && size < MIN_DATA_TRACK_MESSAGE_SIZE
+        {
+            return Err(FoxgloveError::ConfigurationError(format!(
+                "max_data_track_message_size ({size} bytes) is below the minimum of \
+                 {MIN_DATA_TRACK_MESSAGE_SIZE} bytes (one data-channel packet)."
+            )));
+        }
         let runtime = self.runtime.unwrap_or_else(get_runtime_handle);
         let services = Arc::new(parking_lot::RwLock::new(ServiceMap::from_iter(
             self.services.into_values(),
@@ -539,9 +688,12 @@ impl Gateway {
             runtime: runtime.clone(),
             channel_filter: self.channel_filter,
             qos_classifier: self.qos_classifier,
+            suppress_video_transcode: self.suppress_video_transcode,
             server_info: self.server_info,
             message_backlog_size: self.message_backlog_size,
+            max_data_track_message_size: self.max_data_track_message_size,
             video_codec_override,
+            video_encoder,
             context: self.context,
         };
         let connection = RemoteAccessConnection::new(params, services);
@@ -600,6 +752,30 @@ mod tests {
     }
 
     #[test]
+    fn max_data_track_message_size_builder() {
+        // Unset by default; the default value is applied downstream when building
+        // SessionParams (see DEFAULT_MAX_DATA_TRACK_MESSAGE_SIZE).
+        assert_eq!(Gateway::new().max_data_track_message_size, None);
+        assert_eq!(
+            Gateway::new()
+                .max_data_track_message_size(64 * 1024)
+                .max_data_track_message_size,
+            Some(64 * 1024)
+        );
+    }
+
+    #[test]
+    fn max_data_track_message_size_below_minimum_rejected() {
+        // A limit below the minimum is a misconfiguration and must be rejected
+        // at startup.
+        let result = Gateway::new()
+            .device_token("test-token")
+            .max_data_track_message_size(MIN_DATA_TRACK_MESSAGE_SIZE - 1)
+            .start();
+        assert!(matches!(result, Err(FoxgloveError::ConfigurationError(_))));
+    }
+
+    #[test]
     fn test_parse_video_codec() {
         // All livekit codec names parse, case-insensitively.
         assert!(matches!(parse_video_codec("av1"), Some(VideoCodec::AV1)));
@@ -613,5 +789,43 @@ mod tests {
         assert!(parse_video_codec("").is_none());
         assert!(parse_video_codec("hevc").is_none());
         assert!(parse_video_codec("h.264").is_none());
+    }
+
+    #[test]
+    fn test_parse_video_encoder() {
+        // All backend names parse, case-insensitively.
+        assert_eq!(parse_video_encoder("auto"), Some(VideoEncoderBackend::Auto));
+        assert_eq!(
+            parse_video_encoder("software"),
+            Some(VideoEncoderBackend::Software)
+        );
+        assert_eq!(
+            parse_video_encoder("hardware"),
+            Some(VideoEncoderBackend::Hardware)
+        );
+        assert_eq!(
+            parse_video_encoder("nvenc"),
+            Some(VideoEncoderBackend::Nvenc)
+        );
+        assert_eq!(
+            parse_video_encoder("vaapi"),
+            Some(VideoEncoderBackend::Vaapi)
+        );
+        assert_eq!(
+            parse_video_encoder("videotoolbox"),
+            Some(VideoEncoderBackend::VideoToolbox)
+        );
+        assert_eq!(
+            parse_video_encoder("NVENC"),
+            Some(VideoEncoderBackend::Nvenc)
+        );
+        assert_eq!(
+            parse_video_encoder("VideoToolbox"),
+            Some(VideoEncoderBackend::VideoToolbox)
+        );
+        // Unrecognized values are rejected.
+        assert!(parse_video_encoder("").is_none());
+        assert!(parse_video_encoder("gpu").is_none());
+        assert!(parse_video_encoder("video-toolbox").is_none());
     }
 }
