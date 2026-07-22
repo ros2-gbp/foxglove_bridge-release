@@ -447,6 +447,65 @@ typedef uint8_t foxglove_reliability;
 #endif // __cplusplus
 #endif
 
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+/**
+ * The preferred backend for encoding published video tracks.
+ *
+ * `Auto` lets the SDK choose, and also defers to the `FOXGLOVE_VIDEO_ENCODER` environment
+ * variable when set. If the requested backend is unavailable on the host, the SDK falls back
+ * to another compatible encoder.
+ */
+enum foxglove_video_encoder_backend
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Let the SDK choose the encoder backend (and honor `FOXGLOVE_VIDEO_ENCODER`).
+   */
+  FOXGLOVE_VIDEO_ENCODER_BACKEND_AUTO = 0,
+#endif
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Prefer a software encoder.
+   */
+  FOXGLOVE_VIDEO_ENCODER_BACKEND_SOFTWARE = 1,
+#endif
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Prefer any available hardware encoder.
+   */
+  FOXGLOVE_VIDEO_ENCODER_BACKEND_HARDWARE = 2,
+#endif
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Prefer NVIDIA NVENC when available.
+   */
+  FOXGLOVE_VIDEO_ENCODER_BACKEND_NVENC = 3,
+#endif
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Prefer VAAPI when available.
+   */
+  FOXGLOVE_VIDEO_ENCODER_BACKEND_VAAPI = 4,
+#endif
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Prefer VideoToolbox on Apple platforms when available.
+   */
+  FOXGLOVE_VIDEO_ENCODER_BACKEND_VIDEO_TOOLBOX = 5,
+#endif
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum foxglove_video_encoder_backend foxglove_video_encoder_backend;
+#else
+typedef uint8_t foxglove_video_encoder_backend;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+#endif
+
 #if !defined(__wasm__)
 /**
  * Level indicator for a server status message.
@@ -1070,6 +1129,25 @@ typedef struct foxglove_cube_primitive {
    */
   const struct foxglove_color *color;
 } foxglove_cube_primitive;
+
+/**
+ * A discrete event that occurred over a time range
+ */
+typedef struct foxglove_event {
+  /**
+   * Event start time (inclusive)
+   */
+  const struct foxglove_timestamp *start_time;
+  /**
+   * Event end time (inclusive)
+   */
+  const struct foxglove_timestamp *end_time;
+  /**
+   * Additional key-value metadata. Keys must be unique.
+   */
+  const struct foxglove_key_value_pair *metadata;
+  size_t metadata_count;
+} foxglove_event;
 
 /**
  * A transform between two reference frames in 3D space. The transform defines the position and orientation of a child frame within a parent frame. Translation moves the origin of the child frame relative to the parent origin. The rotation changes the orientation of the child frame around its origin.
@@ -2735,6 +2813,19 @@ typedef struct foxglove_gateway_options {
   struct foxglove_qos_profile (*qos_classifier)(const void *context,
                                                 const struct foxglove_channel_descriptor *channel);
   /**
+   * Context provided to the `suppress_video_transcode` callback.
+   */
+  const void *suppress_video_transcode_context;
+  /**
+   * Opts channels out of video transcoding, delivering them as data instead.
+   *
+   * Return true to deliver the given channel as data rather than transcoding it to video. This
+   * is required for compressed depth maps, whose pixel values encode depth and would be
+   * corrupted by lossy video transcoding. If not set, all video-capable channels are transcoded.
+   */
+  bool (*suppress_video_transcode)(const void *context,
+                                   const struct foxglove_channel_descriptor *channel);
+  /**
    * Context provided to the `fetch_asset` callback.
    */
   const void *fetch_asset_context;
@@ -2786,6 +2877,19 @@ typedef struct foxglove_gateway_options {
    * `foxglove_gateway_start` returns `FOXGLOVE_ERROR_VALUE_ERROR`.
    */
   const struct foxglove_parameter_handler *parameter_handler;
+  /**
+   * Preferred backend for encoding published video tracks.
+   *
+   * Defaults to `FOXGLOVE_VIDEO_ENCODER_BACKEND_AUTO` (0), which lets the SDK choose and
+   * honors the `FOXGLOVE_VIDEO_ENCODER` environment variable. Any other value overrides the
+   * environment variable.
+   */
+  foxglove_video_encoder_backend video_encoder;
+  /**
+   * Maximum lossy data-track message size in bytes. A value of 0 means use the default
+   * (102400). Must be at least 1200.
+   */
+  size_t max_data_track_message_size;
 } foxglove_gateway_options;
 #endif
 
@@ -3676,6 +3780,52 @@ foxglove_error foxglove_cube_primitive_encode(const struct foxglove_cube_primiti
                                               uint8_t *ptr,
                                               size_t len,
                                               size_t *encoded_len);
+
+/**
+ * Create a new typed channel, and return an owned raw channel pointer to it.
+ *
+ * # Safety
+ * We're trusting the caller that the channel will only be used with this type T.
+ */
+foxglove_error foxglove_channel_create_event(struct foxglove_string topic,
+                                             const struct foxglove_context *context,
+                                             const struct foxglove_channel **channel);
+
+#if !defined(__wasm__)
+/**
+ * Log a Event message to a channel.
+ *
+ * # Safety
+ * The channel must have been created for this type with foxglove_channel_create_event.
+ */
+foxglove_error foxglove_channel_log_event(const struct foxglove_channel *channel,
+                                          const struct foxglove_event *msg,
+                                          const uint64_t *log_time,
+                                          FoxgloveSinkId sink_id);
+#endif
+
+/**
+ * Get the Event schema.
+ *
+ * All buffers in the returned schema are statically allocated.
+ */
+struct foxglove_schema foxglove_event_schema(void);
+
+/**
+ * Encode a Event message as protobuf to the buffer provided.
+ *
+ * On success, writes the encoded length to *encoded_len.
+ * If the provided buffer has insufficient capacity, writes the required capacity to *encoded_len and
+ * returns FOXGLOVE_ERROR_BUFFER_TOO_SHORT.
+ * If the message cannot be encoded, logs the reason to stderr and returns FOXGLOVE_ERROR_ENCODE.
+ *
+ * # Safety
+ * ptr must be a valid pointer to a memory region at least len bytes long.
+ */
+foxglove_error foxglove_event_encode(const struct foxglove_event *msg,
+                                     uint8_t *ptr,
+                                     size_t len,
+                                     size_t *encoded_len);
 
 /**
  * Create a new typed channel, and return an owned raw channel pointer to it.
