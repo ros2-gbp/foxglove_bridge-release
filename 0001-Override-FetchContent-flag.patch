@@ -1,4 +1,4 @@
-From 69d8c83005d94ad84d1d63b20d8e892c2a4c1e7a Mon Sep 17 00:00:00 2001
+From efd4c5e78fb5b14e56f059a9e9f78c1d50dd37e7 Mon Sep 17 00:00:00 2001
 From: Eric Lujan <eric@foxglove.dev>
 Date: Thu, 25 Sep 2025 12:18:20 -0700
 Subject: [PATCH] Override FetchContent flag
