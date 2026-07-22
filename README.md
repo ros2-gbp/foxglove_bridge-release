@@ -1,3 +1,28 @@
+## foxglove-sdk (jazzy) - 3.4.3-1
+
+The packages in the `foxglove-sdk` repository were released into the `jazzy` distro by running `/usr/bin/bloom-release foxglove-sdk --ros-distro jazzy` on `Wed, 22 Jul 2026 19:34:09 -0000`
+
+These packages were released:
+- `foxglove_bridge`
+- `foxglove_msgs`
+
+Version of package(s) in repository `foxglove-sdk`:
+
+- upstream repository: https://github.com/foxglove/foxglove-sdk.git
+- release repository: https://github.com/ros2-gbp/foxglove_bridge-release.git
+- rosdistro version: `3.4.2-1`
+- old version: `3.4.2-1`
+- new version: `3.4.3-1`
+
+Versions of tools used:
+
+- bloom version: `0.14.3`
+- catkin_pkg version: `1.1.0`
+- rosdep version: `0.26.0`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## foxglove-sdk (humble) - 3.4.3-2
 
 The packages in the `foxglove-sdk` repository were released into the `humble` distro by running `/usr/bin/bloom-release foxglove-sdk --ros-distro humble` on `Wed, 22 Jul 2026 19:32:38 -0000`
