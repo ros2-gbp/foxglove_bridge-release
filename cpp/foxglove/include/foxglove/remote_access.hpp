@@ -192,6 +192,34 @@ struct QosProfile {
 /// Accepts any callable with signature `QosProfile(const ChannelDescriptor&)`.
 using QosClassifierFn = std::function<QosProfile(const ChannelDescriptor&)>;
 
+/// @brief A callable that decides, per channel, whether to opt out of video transcoding.
+///
+/// Accepts any callable with signature `bool(const ChannelDescriptor&)`. Return true to deliver
+/// the channel as data rather than transcoding it to video; this is required for compressed depth
+/// maps, whose pixel values encode depth and would be corrupted by lossy video transcoding.
+using SuppressVideoTranscodeFn = std::function<bool(const ChannelDescriptor&)>;
+
+/// @brief Preferred backend for encoding published video tracks.
+///
+/// This preference applies to every video track the gateway publishes. If the requested
+/// backend is unavailable on the host, the SDK falls back to another compatible encoder.
+/// @ref VideoEncoderBackend::Auto lets the SDK choose (and honors the `FOXGLOVE_VIDEO_ENCODER`
+/// environment variable); any other value overrides that environment variable.
+enum class VideoEncoderBackend : uint8_t {
+  /// Let the SDK choose the encoder backend. This is the default.
+  Auto = 0,
+  /// Prefer a software encoder.
+  Software = 1,
+  /// Prefer any available hardware encoder.
+  Hardware = 2,
+  /// Prefer NVIDIA NVENC when available.
+  Nvenc = 3,
+  /// Prefer VAAPI when available.
+  Vaapi = 4,
+  /// Prefer VideoToolbox on Apple platforms when available.
+  VideoToolbox = 5,
+};
+
 /// @brief Options for creating a remote access gateway.
 struct RemoteAccessGatewayOptions {
   /// @brief The logging context for this gateway.
@@ -219,6 +247,12 @@ struct RemoteAccessGatewayOptions {
   /// If set, this callback is invoked for each channel to determine its quality-of-service
   /// profile. If not set, all channels use the default lossy profile.
   QosClassifierFn qos_classifier;
+  /// @brief A video-transcode opt-out callback.
+  ///
+  /// If set, this callback is invoked for each channel; returning true delivers the channel as
+  /// data instead of transcoding it to video. If not set, all video-capable channels are
+  /// transcoded.
+  SuppressVideoTranscodeFn suppress_video_transcode;
   /// @brief A parameter handler.
   ///
   /// When set, this handler takes precedence over the deprecated
@@ -249,6 +283,20 @@ struct RemoteAccessGatewayOptions {
   ///
   /// By default, each participant gets a queue of 1024 messages.
   std::optional<size_t> message_backlog_size = std::nullopt;
+  /// @brief Preferred backend for encoding published video tracks.
+  ///
+  /// Defaults to @ref VideoEncoderBackend::Auto, which lets the SDK choose and honors the
+  /// `FOXGLOVE_VIDEO_ENCODER` environment variable.
+  VideoEncoderBackend video_encoder = VideoEncoderBackend::Auto;
+  /// @brief Override the maximum lossy data-track message size.
+  ///
+  /// Lossy data-track messages larger than this many bytes are dropped before publishing, with a
+  /// throttled warning, so one high-bandwidth channel cannot starve the others. Must be at least
+  /// 1200 bytes (one data-channel packet).
+  ///
+  /// By default, the limit is 102400 bytes (100 KiB).
+  std::optional<size_t> max_data_track_message_size = std::nullopt;
+  // New fields are appended last so that adding them preserves the layout of pre-existing fields.
 };
 
 /// @brief A remote access gateway for live visualization and teleop in Foxglove.
@@ -326,6 +374,7 @@ private:
     std::unique_ptr<FetchAssetHandler> fetch_asset,
     std::unique_ptr<SinkChannelFilterFn> sink_channel_filter,
     std::unique_ptr<QosClassifierFn> qos_classifier,
+    std::unique_ptr<SuppressVideoTranscodeFn> suppress_video_transcode,
     std::unique_ptr<ParameterHandler> parameter_handler
   );
 
@@ -333,6 +382,7 @@ private:
   std::unique_ptr<FetchAssetHandler> fetch_asset_;
   std::unique_ptr<SinkChannelFilterFn> sink_channel_filter_;
   std::unique_ptr<QosClassifierFn> qos_classifier_;
+  std::unique_ptr<SuppressVideoTranscodeFn> suppress_video_transcode_;
   std::unique_ptr<ParameterHandler> parameter_handler_;
   std::unique_ptr<foxglove_gateway, foxglove_error (*)(foxglove_gateway*)> impl_;
 };
