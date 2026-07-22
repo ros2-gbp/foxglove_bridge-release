@@ -83,6 +83,35 @@ impl foxglove::remote_access::QosClassifier for QosClassifier {
     }
 }
 
+/// A video-transcode opt-out predicate that wraps a C callback.
+#[derive(Clone)]
+struct SuppressVideoTranscode {
+    callback_context: *const c_void,
+    callback: unsafe extern "C" fn(*const c_void, *const FoxgloveChannelDescriptor) -> bool,
+}
+
+impl SuppressVideoTranscode {
+    fn new(
+        callback_context: *const c_void,
+        callback: unsafe extern "C" fn(*const c_void, *const FoxgloveChannelDescriptor) -> bool,
+    ) -> Self {
+        Self {
+            callback_context,
+            callback,
+        }
+    }
+}
+
+unsafe impl Send for SuppressVideoTranscode {}
+unsafe impl Sync for SuppressVideoTranscode {}
+
+impl foxglove::remote_access::SuppressVideoTranscode for SuppressVideoTranscode {
+    fn should_suppress(&self, channel: &foxglove::ChannelDescriptor) -> bool {
+        let c_channel_descriptor = FoxgloveChannelDescriptor(channel.clone());
+        unsafe { (self.callback)(self.callback_context, &raw const c_channel_descriptor) }
+    }
+}
+
 /// The status of the remote access gateway connection.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +133,41 @@ impl From<foxglove::remote_access::ConnectionStatus> for FoxgloveConnectionStatu
             foxglove::remote_access::ConnectionStatus::Connected => Self::Connected,
             foxglove::remote_access::ConnectionStatus::ShuttingDown => Self::ShuttingDown,
             foxglove::remote_access::ConnectionStatus::Shutdown => Self::Shutdown,
+        }
+    }
+}
+
+/// The preferred backend for encoding published video tracks.
+///
+/// `Auto` lets the SDK choose, and also defers to the `FOXGLOVE_VIDEO_ENCODER` environment
+/// variable when set. If the requested backend is unavailable on the host, the SDK falls back
+/// to another compatible encoder.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoxgloveVideoEncoderBackend {
+    /// Let the SDK choose the encoder backend (and honor `FOXGLOVE_VIDEO_ENCODER`).
+    Auto = 0,
+    /// Prefer a software encoder.
+    Software = 1,
+    /// Prefer any available hardware encoder.
+    Hardware = 2,
+    /// Prefer NVIDIA NVENC when available.
+    Nvenc = 3,
+    /// Prefer VAAPI when available.
+    Vaapi = 4,
+    /// Prefer VideoToolbox on Apple platforms when available.
+    VideoToolbox = 5,
+}
+
+impl From<FoxgloveVideoEncoderBackend> for foxglove::remote_access::VideoEncoderBackend {
+    fn from(backend: FoxgloveVideoEncoderBackend) -> Self {
+        match backend {
+            FoxgloveVideoEncoderBackend::Auto => Self::Auto,
+            FoxgloveVideoEncoderBackend::Software => Self::Software,
+            FoxgloveVideoEncoderBackend::Hardware => Self::Hardware,
+            FoxgloveVideoEncoderBackend::Nvenc => Self::Nvenc,
+            FoxgloveVideoEncoderBackend::Vaapi => Self::Vaapi,
+            FoxgloveVideoEncoderBackend::VideoToolbox => Self::VideoToolbox,
         }
     }
 }
@@ -560,6 +624,21 @@ pub struct FoxgloveGatewayOptions<'a> {
         ) -> FoxgloveQosProfile,
     >,
 
+    /// Context provided to the `suppress_video_transcode` callback.
+    pub suppress_video_transcode_context: *const c_void,
+
+    /// Opts channels out of video transcoding, delivering them as data instead.
+    ///
+    /// Return true to deliver the given channel as data rather than transcoding it to video. This
+    /// is required for compressed depth maps, whose pixel values encode depth and would be
+    /// corrupted by lossy video transcoding. If not set, all video-capable channels are transcoded.
+    pub suppress_video_transcode: Option<
+        unsafe extern "C" fn(
+            context: *const c_void,
+            channel: *const FoxgloveChannelDescriptor,
+        ) -> bool,
+    >,
+
     /// Context provided to the `fetch_asset` callback.
     pub fetch_asset_context: *const c_void,
 
@@ -609,6 +688,19 @@ pub struct FoxgloveGatewayOptions<'a> {
     /// When provided, both `get` and `set` on the handler are required; otherwise
     /// `foxglove_gateway_start` returns `FOXGLOVE_ERROR_VALUE_ERROR`.
     pub parameter_handler: Option<&'a FoxgloveParameterHandler>,
+
+    /// Preferred backend for encoding published video tracks.
+    ///
+    /// Defaults to `FOXGLOVE_VIDEO_ENCODER_BACKEND_AUTO` (0), which lets the SDK choose and
+    /// honors the `FOXGLOVE_VIDEO_ENCODER` environment variable. Any other value overrides the
+    /// environment variable.
+    pub video_encoder: FoxgloveVideoEncoderBackend,
+
+    /// Maximum lossy data-track message size in bytes. A value of 0 means use the default
+    /// (102400). Must be at least 1200.
+    pub max_data_track_message_size: usize,
+    // New fields are appended last so that adding them preserves the memory offsets of all
+    // pre-existing fields.
 }
 
 // Handle
@@ -742,6 +834,14 @@ unsafe fn do_foxglove_gateway_start(
         )));
     }
 
+    // Suppress video transcode
+    if let Some(suppress_video_transcode) = options.suppress_video_transcode {
+        gateway = gateway.suppress_video_transcode(Arc::new(SuppressVideoTranscode::new(
+            options.suppress_video_transcode_context,
+            suppress_video_transcode,
+        )));
+    }
+
     // Fetch asset handler
     if let Some(fetch_asset) = options.fetch_asset {
         gateway = gateway.fetch_asset_handler(Arc::new(FetchAssetHandler::new(
@@ -772,6 +872,17 @@ unsafe fn do_foxglove_gateway_start(
     // Message backlog size
     if options.message_backlog_size != 0 {
         gateway = gateway.message_backlog_size(options.message_backlog_size);
+    }
+
+    // A value of 0 means "unset" — leave it off so the SDK applies its default.
+    if options.max_data_track_message_size != 0 {
+        gateway = gateway.max_data_track_message_size(options.max_data_track_message_size);
+    }
+
+    // Preferred video encoder backend. Leave `Auto` unset so the
+    // `FOXGLOVE_VIDEO_ENCODER` environment variable can still take effect.
+    if options.video_encoder != FoxgloveVideoEncoderBackend::Auto {
+        gateway = gateway.video_encoder(options.video_encoder.into());
     }
 
     let handle = gateway.start()?;
