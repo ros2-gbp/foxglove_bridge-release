@@ -470,11 +470,10 @@ impl ViewerConnection {
             let writer = self
                 .room
                 .local_participant()
-                .stream_bytes(StreamByteOptions {
-                    topic: "control".to_string(),
-                    destination_identities: vec![gateway_identity],
-                    ..StreamByteOptions::default()
-                })
+                .stream_bytes(
+                    StreamByteOptions::new_with_topic("control")
+                        .with_destination_identity(gateway_identity),
+                )
                 .await
                 .map_err(|e| anyhow::anyhow!("failed to open byte stream to gateway: {e}"))?;
             *guard = Some(writer);
@@ -872,6 +871,7 @@ pub struct TestGatewayOptions {
     pub qos_classifier: Option<QosClassifierFn>,
     pub suppress_video_transcode: Option<SuppressVideoTranscodeFn>,
     pub max_data_track_message_size: Option<usize>,
+    pub point_cloud_compression: Option<Option<foxglove::remote_access::PointCloudCompression>>,
 }
 
 /// A test gateway backed by a mock Foxglove API server and a LiveKit room.
@@ -960,6 +960,9 @@ impl TestGateway {
         }
         if let Some(size) = options.max_data_track_message_size {
             gateway = gateway.max_data_track_message_size(size);
+        }
+        if let Some(compression) = options.point_cloud_compression {
+            gateway = gateway.point_cloud_compression_fn(move |_| compression);
         }
 
         let handle = gateway.start().context("start Gateway")?;
