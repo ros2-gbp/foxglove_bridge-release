@@ -25,6 +25,7 @@ class McapWritable(Protocol):
 from .mcap import MCAPWriteOptions, MCAPWriter
 from .remote_access import Capability as RemoteAccessCapability
 from .remote_access import (
+    DracoEncodeOptions,
     QosProfile,
     RemoteAccessConnectionStatus,
     RemoteAccessGateway,
@@ -373,6 +374,7 @@ def start_gateway(
     listener: Any = None,
     supported_encodings: list[str] | None = None,
     services: list[Service] | None = None,
+    asset_handler: AssetHandler | None = None,
     context: Context | None = None,
     channel_filter: SinkChannelFilter | None = None,
     qos_classifier: Callable[[ChannelDescriptor], QosProfile] | None = None,
@@ -381,6 +383,9 @@ def start_gateway(
     foxglove_api_url: str | None = None,
     foxglove_api_timeout: float | None = None,
     video_encoder: VideoEncoderBackend | None = None,
+    point_cloud_compression: (
+        Callable[[ChannelDescriptor], DracoEncodeOptions | bool | None] | None
+    ) = None,
 ) -> RemoteAccessGateway:
     """
     Start a remote access gateway for live visualization and teleop in Foxglove.
