@@ -4,7 +4,7 @@
 # includes to include paths.
 
 cmake_minimum_required(VERSION 3.22)
-project(foxglove-sdk VERSION 0.26.0)
+project(foxglove-sdk VERSION 0.27.0)
 
 # Enable ccache if available
 find_program(CCACHE_PROGRAM ccache)
@@ -490,6 +490,13 @@ if(FOXGLOVE_BUILD_EXAMPLES)
     add_foxglove_example(example_rgb_camera_visualization SOURCES examples/rgb-camera-visualization/main.cpp LIBS opencv_core opencv_videoio)
   else()
     message(STATUS "OpenCV not found; skipping example_rgb_camera_visualization")
+  endif()
+
+  find_package(depthai CONFIG QUIET)
+  if(depthai_FOUND)
+    add_foxglove_example(example_oak_camera_streaming SOURCES examples/oak-camera-streaming/src/main.cpp LIBS depthai::core)
+  else()
+    message(STATUS "DepthAI not found; skipping example_oak_camera_streaming")
   endif()
 
   add_foxglove_example(example_remote_data_loader_backend SOURCES examples/remote-data-loader-backend/src/main.cpp LIBS nlohmann_json::nlohmann_json httplib::httplib base64 date::date)
