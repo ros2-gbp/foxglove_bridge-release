@@ -1,0 +1,94 @@
+{
+  "configById": {
+    "Plot!l295fh": {
+      "paths": [
+        {
+          "value": "/action/state.scalars[:]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "color": "#4e98e2",
+          "id": "9e138b19-6a21-430e-ba89-21d44416796a"
+        }
+      ]
+    },
+    "Plot!15ur4re": {
+      "paths": [
+        {
+          "value": "/observation/state.scalars[:]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "color": "#4e98e2",
+          "id": "082e0143-ba4e-4b01-9372-ed6baaed3bee"
+        }
+      ]
+    },
+    "Image!1ein5c3": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 60,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {
+        "imageTopic": "/observation/images/front"
+      }
+    },
+    "RawMessages!33bjzas": {
+      "defaultExpanded": false,
+      "topicPath": "/observation/state"
+    }
+  },
+  "globalVariables": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "userNodes": {},
+  "layout": {
+    "first": {
+      "first": "Plot!l295fh",
+      "second": "Plot!15ur4re",
+      "direction": "column"
+    },
+    "second": {
+      "first": "Image!1ein5c3",
+      "second": "RawMessages!33bjzas",
+      "direction": "column",
+      "splitPercentage": 76.51006711409396
+    },
+    "direction": "row"
+  }
+}
