@@ -163,17 +163,27 @@ pub struct CompressedAudio {
     pub timestamp: ::core::option::Option<crate::messages::Timestamp>,
     /// Compressed audio data. Packet duration is determined by the codec during encoding. Messages should generally contain approximately 20 ms of audio.
     ///
-    /// - `opus`
+    /// For each `format` value, the `data` field contains compressed audio data serialized as follows:
+    ///
+    /// - `opus`:
     ///    - Each message must contain a complete raw Opus packet, without Ogg, WebM, or other container framing, as described in [RFC 6716 section 3](<https://datatracker.ietf.org/doc/html/rfc6716#section-3>).
     ///    - Each packet contains all information necessary for decoding, and may be decoded at any sample rate supported by Opus (8, 12, 16, 24, or 48 kHz).
     ///    - A single raw Opus packet represents mono or stereo audio; multichannel Opus requires multistream or container metadata and is not supported by this schema.
-    /// - `mp4a.40.2`
+    /// - `mp4a.40.2`:
     ///    - Each message must contain a complete MPEG-4 AAC-LC ADTS frame, including the ADTS header, as described in section 1.A.3.2 of ISO/IEC 14496-3:2019.
     ///    - The ADTS header supplies stream parameters such as sample rate and channel configuration.
+    /// - `g726-16`, `g726-24`, `g726-32`, and `g726-40`:
+    ///    - Each message must contain raw G.726 codewords without WAV, RTP, or other container framing. Codewords may not span messages.
+    ///    - Audio is mono at 8 kHz. The suffix specifies the bitrate in kbps and therefore the number of bits per sample: 2, 3, 4, or 5 respectively.
+    ///    - Codewords are packed beginning with the least-significant bit, as described in [RFC 3551 section 4.5.4](<https://www.rfc-editor.org/rfc/rfc3551.html#section-4.5.4>).
+    ///    - Codewords may cross octet boundaries. To keep every codeword within one message, the message length must be a multiple of 1, 3, 1, or 5 octets for `g726-16`, `g726-24`, `g726-32`, and `g726-40` respectively, holding 4, 8, 2, or 8 codewords.
+    ///    - Messages form a continuous encoded stream and preserve G.726 predictor and quantizer state across message boundaries.
+    /// - `aal2-g726-16`, `aal2-g726-24`, `aal2-g726-32`, and `aal2-g726-40`:
+    ///    - These formats have the same requirements as the corresponding `g726-*` formats, except codewords use the opposite bit-packing order specified for AAL2.
     #[prost(bytes = "bytes", tag = "2")]
     #[cfg_attr(feature = "serde", serde(with = "crate::messages::serde_bytes"))]
     pub data: ::prost::bytes::Bytes,
-    /// Audio format. Values supported by Foxglove are `opus` for raw Opus packets and `mp4a.40.2` for AAC-LC ADTS frames.
+    /// Format of the audio data. See the `data` field description for supported values. Consumers may support a subset of these formats.
     #[prost(string, tag = "3")]
     pub format: ::prost::alloc::string::String,
 }
@@ -1206,17 +1216,29 @@ pub struct RawAudio {
     /// Timestamp of the start of the audio block
     #[prost(message, optional, tag = "1")]
     pub timestamp: ::core::option::Option<crate::messages::Timestamp>,
-    /// Audio data. The samples in the data must be interleaved and little-endian
+    /// Raw audio data without WAV, container, or RTP headers. Samples must be interleaved. Multibyte samples must be little-endian.
+    ///
+    /// For each `format` value, the `data` field contains audio sample data serialized as follows:
+    ///
+    /// - `pcm-s16`:
+    ///    - Each sample is a signed 16-bit PCM value.
+    ///    - The byte length must be divisible by `2 * number_of_channels` so the block contains complete sample frames.
+    /// - `g711-alaw`:
+    ///    - Each byte is one G.711 A-law encoded sample.
+    ///    - The byte length must be divisible by `number_of_channels` so the block contains complete sample frames.
+    /// - `g711-ulaw`:
+    ///    - Each byte is one G.711 mu-law encoded sample.
+    ///    - The byte length must be divisible by `number_of_channels` so the block contains complete sample frames.
     #[prost(bytes = "bytes", tag = "2")]
     #[cfg_attr(feature = "serde", serde(with = "crate::messages::serde_bytes"))]
     pub data: ::prost::bytes::Bytes,
-    /// Audio format. Only 'pcm-s16' is currently supported
+    /// Format of the audio data. See the `data` field description for supported values. Consumers may support a subset of these formats.
     #[prost(string, tag = "3")]
     pub format: ::prost::alloc::string::String,
-    /// Sample rate in Hz
+    /// Sample rate in Hz. This must be greater than zero.
     #[prost(fixed32, tag = "4")]
     pub sample_rate: u32,
-    /// Number of channels in the audio block
+    /// Number of channels in the audio block. This must be greater than zero.
     #[prost(fixed32, tag = "5")]
     pub number_of_channels: u32,
 }
