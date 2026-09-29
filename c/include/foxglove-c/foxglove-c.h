@@ -551,6 +551,42 @@ typedef uint8_t foxglove_point_cloud_compression_mode;
 #endif // __cplusplus
 #endif
 
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+/**
+ * Draco point-cloud encoding method.
+ *
+ * Quantization applies to positions and every float32 field under both methods, and
+ * integer fields are copied losslessly under both; the methods differ in point order and
+ * compression ratio.
+ */
+enum foxglove_draco_method
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * kd-tree encoding: the best compression ratios, but points are reordered. This is
+   * the default (0).
+   */
+  FOXGLOVE_DRACO_METHOD_KD_TREE = 0,
+#endif
+#if defined(FOXGLOVE_REMOTE_ACCESS)
+  /**
+   * Sequential encoding: preserves point order, at a lower compression ratio.
+   */
+  FOXGLOVE_DRACO_METHOD_SEQUENTIAL = 1,
+#endif
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum foxglove_draco_method foxglove_draco_method;
+#else
+typedef uint8_t foxglove_draco_method;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+#endif
+
 #if !defined(__wasm__)
 /**
  * Level indicator for a server status message.
@@ -1010,18 +1046,28 @@ typedef struct foxglove_compressed_audio {
   /**
    * Compressed audio data. Packet duration is determined by the codec during encoding. Messages should generally contain approximately 20 ms of audio.
    *
-   * - `opus`
+   * For each `format` value, the `data` field contains compressed audio data serialized as follows:
+   *
+   * - `opus`:
    *   - Each message must contain a complete raw Opus packet, without Ogg, WebM, or other container framing, as described in [RFC 6716 section 3](https://datatracker.ietf.org/doc/html/rfc6716#section-3).
    *   - Each packet contains all information necessary for decoding, and may be decoded at any sample rate supported by Opus (8, 12, 16, 24, or 48 kHz).
    *   - A single raw Opus packet represents mono or stereo audio; multichannel Opus requires multistream or container metadata and is not supported by this schema.
-   * - `mp4a.40.2`
+   * - `mp4a.40.2`:
    *   - Each message must contain a complete MPEG-4 AAC-LC ADTS frame, including the ADTS header, as described in section 1.A.3.2 of ISO/IEC 14496-3:2019.
    *   - The ADTS header supplies stream parameters such as sample rate and channel configuration.
+   * - `g726-16`, `g726-24`, `g726-32`, and `g726-40`:
+   *   - Each message must contain raw G.726 codewords without WAV, RTP, or other container framing. Codewords may not span messages.
+   *   - Audio is mono at 8 kHz. The suffix specifies the bitrate in kbps and therefore the number of bits per sample: 2, 3, 4, or 5 respectively.
+   *   - Codewords are packed beginning with the least-significant bit, as described in [RFC 3551 section 4.5.4](https://www.rfc-editor.org/rfc/rfc3551.html#section-4.5.4).
+   *   - Codewords may cross octet boundaries. To keep every codeword within one message, the message length must be a multiple of 1, 3, 1, or 5 octets for `g726-16`, `g726-24`, `g726-32`, and `g726-40` respectively, holding 4, 8, 2, or 8 codewords.
+   *   - Messages form a continuous encoded stream and preserve G.726 predictor and quantizer state across message boundaries.
+   * - `aal2-g726-16`, `aal2-g726-24`, `aal2-g726-32`, and `aal2-g726-40`:
+   *   - These formats have the same requirements as the corresponding `g726-*` formats, except codewords use the opposite bit-packing order specified for AAL2.
    */
   const unsigned char *data;
   size_t data_len;
   /**
-   * Audio format. Values supported by Foxglove are `opus` for raw Opus packets and `mp4a.40.2` for AAC-LC ADTS frames.
+   * Format of the audio data. See the `data` field description for supported values. Consumers may support a subset of these formats.
    */
   struct foxglove_string format;
 } foxglove_compressed_audio;
@@ -2134,20 +2180,32 @@ typedef struct foxglove_raw_audio {
    */
   const struct foxglove_timestamp *timestamp;
   /**
-   * Audio data. The samples in the data must be interleaved and little-endian
+   * Raw audio data without WAV, container, or RTP headers. Samples must be interleaved. Multibyte samples must be little-endian.
+   *
+   * For each `format` value, the `data` field contains audio sample data serialized as follows:
+   *
+   * - `pcm-s16`:
+   *   - Each sample is a signed 16-bit PCM value.
+   *   - The byte length must be divisible by `2 * number_of_channels` so the block contains complete sample frames.
+   * - `g711-alaw`:
+   *   - Each byte is one G.711 A-law encoded sample.
+   *   - The byte length must be divisible by `number_of_channels` so the block contains complete sample frames.
+   * - `g711-ulaw`:
+   *   - Each byte is one G.711 mu-law encoded sample.
+   *   - The byte length must be divisible by `number_of_channels` so the block contains complete sample frames.
    */
   const unsigned char *data;
   size_t data_len;
   /**
-   * Audio format. Only 'pcm-s16' is currently supported
+   * Format of the audio data. See the `data` field description for supported values. Consumers may support a subset of these formats.
    */
   struct foxglove_string format;
   /**
-   * Sample rate in Hz
+   * Sample rate in Hz. This must be greater than zero.
    */
   uint32_t sample_rate;
   /**
-   * Number of channels in the audio block
+   * Number of channels in the audio block. This must be greater than zero.
    */
   uint32_t number_of_channels;
 } foxglove_raw_audio;
@@ -2804,7 +2862,7 @@ typedef struct foxglove_parameter_handler {
  */
 typedef struct foxglove_draco_encode_options {
   /**
-   * Quantization bits for the position attribute; must be between 1 and
+   * Quantization bits for positions and float32 fields; must be between 1 and
    * `FOXGLOVE_DRACO_MAX_QUANTIZATION_BITS` (30) inclusive. Out-of-range values are
    * repaired toward the caller's intent, with a logged warning naming the channel:
    * values above the maximum (which the reference Draco decoder rejects) are clamped
@@ -2813,6 +2871,11 @@ typedef struct foxglove_draco_encode_options {
    * `FOXGLOVE_POINT_CLOUD_COMPRESSION_MODE_DISABLED` to do that without the warning.
    */
   uint8_t quantization_bits;
+  /**
+   * The encoding method; zero-initialized (`FOXGLOVE_DRACO_METHOD_KD_TREE`) selects the
+   * default kd-tree encoding.
+   */
+  foxglove_draco_method method;
 } foxglove_draco_encode_options;
 #endif
 
@@ -2821,11 +2884,11 @@ typedef struct foxglove_draco_encode_options {
  * Transparent point-cloud compression for a single channel, returned by the per-channel
  * `point_cloud_compression` callback on the gateway options.
  *
- * When compression is enabled, channels carrying a supported point-cloud schema —
- * currently protobuf-, JSON-, or FlatBuffer-encoded
- * `foxglove.PointCloud`, or CDR-encoded `sensor_msgs/msg/PointCloud2` — are advertised with the protobuf-encoded
- * `foxglove.CompressedPointCloud` schema, and each logged point cloud
- * is compressed in a background task (off the logging hot path) before delivery. If
+ * When compression is enabled, channels carrying a supported point-cloud schema
+ * (currently protobuf-, JSON-, or FlatBuffer-encoded `foxglove.PointCloud`, CDR-encoded
+ * ROS 2 `sensor_msgs/msg/PointCloud2`, or ROS 1 `sensor_msgs/PointCloud2`) are advertised
+ * with the protobuf-encoded `foxglove.CompressedPointCloud` schema, and each logged point
+ * cloud is compressed in a background task (off the logging hot path) before delivery. If
  * compression falls behind the log rate, the oldest queued message is dropped.
  * Channels classified as Reliable skip compression automatically and deliver the raw
  * point cloud on the control bytestream.
@@ -2841,7 +2904,8 @@ typedef struct foxglove_draco_encode_options {
  * Zero-initialize this struct (mode 0) to use the SDK default. Note that when `mode` is
  * `FOXGLOVE_POINT_CLOUD_COMPRESSION_MODE_DRACO`, `draco.quantization_bits` should be set
  * to a value between 1 and 30; out-of-range values are repaired, with a logged warning
- * (see `foxglove_draco_encode_options`).
+ * (see `foxglove_draco_encode_options`). `draco.method` selects the encoding method, and
+ * is kd-tree when left zero.
  */
 typedef struct foxglove_point_cloud_compression {
   /**
