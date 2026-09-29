@@ -9,7 +9,7 @@ The core SDK is written in Rust, with bindings for Python, and C++. We publish p
 - Leverage built-in [Foxglove message types](https://docs.foxglove.dev/docs/sdk/schemas) for common visualizations, or your own custom messages using a supported serialization format
 - ROS packages are available for all supported distributions (see our [ROS 2 tutorial](https://docs.foxglove.dev/docs/getting-started/frameworks/ros2))
 
-Visit [Foxglove SDK Docs](https://docs.foxglove.dev/sdk) to get started.
+Visit [Foxglove SDK Docs](https://docs.foxglove.dev/docs/sdk) to get started.
 
 ## Packages
 
@@ -76,6 +76,7 @@ Visit [Foxglove SDK Docs](https://docs.foxglove.dev/sdk) to get started.
 [![ROS Humble version](https://img.shields.io/ros/v/humble/foxglove-sdk)](https://index.ros.org/p/foxglove_msgs#humble)<br/>
 [![ROS Jazzy version](https://img.shields.io/ros/v/jazzy/foxglove-sdk)](https://index.ros.org/p/foxglove_msgs#jazzy)<br/>
 [![ROS Kilted version](https://img.shields.io/ros/v/kilted/foxglove-sdk)](https://index.ros.org/p/foxglove_msgs#kilted)<br/>
+[![ROS Lyrical version](https://img.shields.io/ros/v/lyrical/foxglove-sdk)](https://index.ros.org/p/foxglove_msgs#lyrical)<br/>
 [![ROS Rolling version](https://img.shields.io/ros/v/rolling/foxglove-sdk)](https://index.ros.org/p/foxglove_msgs#rolling)
 
 </td>
@@ -92,6 +93,7 @@ Visit [Foxglove SDK Docs](https://docs.foxglove.dev/sdk) to get started.
 [![ROS Humble version](https://img.shields.io/ros/v/humble/foxglove-sdk)](https://index.ros.org/p/foxglove_bridge#humble)<br/>
 [![ROS Jazzy version](https://img.shields.io/ros/v/jazzy/foxglove-sdk)](https://index.ros.org/p/foxglove_bridge#jazzy)<br/>
 [![ROS Kilted version](https://img.shields.io/ros/v/kilted/foxglove-sdk)](https://index.ros.org/p/foxglove_bridge#kilted)<br/>
+[![ROS Lyrical version](https://img.shields.io/ros/v/lyrical/foxglove-sdk)](https://index.ros.org/p/foxglove_bridge#lyrical)<br/>
 [![ROS Rolling version](https://img.shields.io/ros/v/rolling/foxglove-sdk)](https://index.ros.org/p/foxglove_bridge#rolling)
 
 </td>
